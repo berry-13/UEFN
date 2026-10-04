@@ -107,3 +107,30 @@ attempt's trace), `state.json`, `compile.json` and `session.json`.
 Modes: `read_only` (read_project), `development` (everything except
 modify_project; the default) and `full_access`. Every call, including denied
 ones, is appended to `.devtools/audit.log`.
+
+## Daemon
+
+`uefn daemon` listens on `127.0.0.1` (default port 4917). Clients find it
+through `.devtools/daemon.json` (`{pid, url, port, token, startedAt}`, mode
+0600). Every route except the static dashboard requires
+`Authorization: Bearer <token>`. `/stream` also accepts `?token=` because
+`EventSource` cannot set headers. Requests whose `Host` or `Origin` is not
+`127.0.0.1:<port>` or `localhost:<port>` are rejected.
+
+| Route | Purpose |
+|---|---|
+| `POST /rpc` | JSON-RPC 2.0, single or batch |
+| `GET /stream` | server-sent events: `hello`, `runtime` (every RuntimeEvent with its index), `activity` (runner progress tagged with `runId`) |
+| `/mcp` | the MCP server over Streamable HTTP; each MCP session gets its own server on the shared engine |
+| `GET /` | dashboard |
+
+RPC methods (schemas in `packages/protocol/src/rpc.ts`):
+
+| Method | Result |
+|---|---|
+| `project.get`, `capabilities.get`, `state.get` | project, adapter capabilities, session + GameState + last compile |
+| `compile`, `session.start`, `session.stop` | as the CLI |
+| `tests.list` | tests and load errors |
+| `tests.run {filter?, repeat?, seed?, compile?}` | `{runId}` returned immediately; follow progress on `/stream` |
+| `runs.list {limit}`, `runs.get {runId}` | history from `.devtools/results` |
+| `events.query {type?, fromIndex?, limit}`, `events.trace {eventId}` | event log and causal trees |

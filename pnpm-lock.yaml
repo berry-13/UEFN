@@ -23,6 +23,9 @@ importers:
       '@uefn-devtools/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@uefn-devtools/daemon':
+        specifier: workspace:*
+        version: link:../../packages/daemon
       '@uefn-devtools/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
@@ -53,6 +56,27 @@ importers:
       yaml:
         specifier: ^2.8.1
         version: 2.9.1
+
+  packages/daemon:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.32.0
+        version: 1.32.0(zod@4.6.5)
+      '@uefn-devtools/core':
+        specifier: workspace:*
+        version: link:../core
+      '@uefn-devtools/mcp':
+        specifier: workspace:*
+        version: link:../mcp
+      '@uefn-devtools/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@uefn-devtools/test':
+        specifier: workspace:*
+        version: link:../test
+      zod:
+        specifier: ^4.3.6
+        version: 4.6.5
 
   packages/mcp:
     dependencies:

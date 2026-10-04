@@ -1,7 +1,37 @@
+import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { TEST_FILE, walk } from "@uefn-devtools/core";
 import { globalState, type TestDefinition } from "./context.ts";
+
+// Node caches ES modules, so importing a test file twice registers nothing
+// the second time. Long-lived processes (daemon, MCP server) keep the
+// definitions per file and re-import, with a cache-busting query, only when
+// the file has changed.
+const KEY = Symbol.for("uefn-devtools.test.module-cache");
+const g = globalThis as unknown as Record<symbol, Map<string, { mtimeMs: number; tests: TestDefinition[] }> | undefined>;
+const moduleCache = (g[KEY] ??= new Map());
+
+async function importTestModule(file: string): Promise<TestDefinition[]> {
+  const { mtimeMs } = await stat(file);
+  const cached = moduleCache.get(file);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.tests;
+  const before = globalState.registry.length;
+  globalState.loadingFile = file;
+  try {
+    const url = pathToFileURL(file);
+    if (cached) url.searchParams.set("v", String(mtimeMs));
+    await import(url.href);
+  } catch (error) {
+    globalState.registry.splice(before);
+    throw error;
+  } finally {
+    globalState.loadingFile = undefined;
+  }
+  const tests = globalState.registry.splice(before);
+  moduleCache.set(file, { mtimeMs, tests });
+  return tests;
+}
 import { loadYamlTests } from "./yaml.ts";
 
 export interface DiscoveryResult {
@@ -22,14 +52,7 @@ export async function loadTests(files: readonly string[]): Promise<DiscoveryResu
       if (/\.ya?ml$/.test(file)) {
         tests.push(...(await loadYamlTests(file)));
       } else {
-        const before = globalState.registry.length;
-        globalState.loadingFile = file;
-        try {
-          await import(pathToFileURL(file).href);
-        } finally {
-          globalState.loadingFile = undefined;
-        }
-        tests.push(...globalState.registry.splice(before));
+        tests.push(...(await importTestModule(file)));
       }
     } catch (error) {
       errors.push({ file, message: (error as Error).message });

@@ -1,0 +1,122 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { DevToolsEngine } from "@uefn-devtools/core";
+import { DaemonClient, DaemonRpcError, daemonInfoPath, startDaemon } from "@uefn-devtools/daemon";
+
+const YAML = `name: Capture A
+setup:
+  - start_game
+steps:
+  - enter: { player: p1, area: A }
+assert:
+  - team: { id: 1, score: 50 }
+`;
+
+async function setup() {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-daemon-"));
+  await writeFile(
+    join(dir, "uefn-devtools.config.yaml"),
+    "simulated:\n  time_scale: 100\n  boot_ms: 100\n  devices:\n    - id: A\n      capture_time_ms: 1000\n",
+  );
+  await mkdir(join(dir, "Tests"));
+  await writeFile(join(dir, "Tests", "a.test.yaml"), YAML);
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const daemon = await startDaemon({ engine, port: 0 });
+  return { dir, engine, daemon, client: new DaemonClient(daemon.info) };
+}
+
+test("rpc run streams progress and lands in run history", async () => {
+  const { dir, engine, daemon, client } = await setup();
+  try {
+    const info = JSON.parse(await readFile(daemonInfoPath(dir), "utf8"));
+    assert.equal(info.token, daemon.info.token);
+    assert.equal((await stat(daemonInfoPath(dir))).mode & 0o777, 0o600);
+    assert.equal((await DaemonClient.discover(dir))?.info.url, daemon.info.url);
+
+    const abort = new AbortController();
+    const stream = client.stream(abort.signal);
+    assert.equal((await stream.next()).value?.channel, "hello");
+    const { runId } = await client.call("tests.run", {});
+    const kinds: string[] = [];
+    let sawRuntime = false;
+    for await (const m of stream) {
+      if (m.channel === "runtime") sawRuntime = true;
+      if (m.channel !== "activity" || m.runId !== runId) continue;
+      const data = m.data as { kind: string; summary?: { status: string } };
+      kinds.push(data.kind);
+      if (data.kind === "done") {
+        assert.equal(data.summary?.status, "passed");
+        break;
+      }
+    }
+    abort.abort();
+    assert.ok(sawRuntime, "runtime events are streamed");
+    assert.ok(kinds.includes("attempt") && kinds.includes("test"));
+
+    const history = await client.call("runs.list", {});
+    assert.equal(history.runs[0].runId, runId);
+    const detail = await client.call("runs.get", { runId });
+    assert.equal(detail.tests[0].status, "passed");
+    const state = await client.call("state.get", {});
+    assert.equal(state.game.teams["1"].score, 50);
+    await assert.rejects(client.call("runs.get", { runId: "../../etc" }), DaemonRpcError);
+  } finally {
+    await daemon.close();
+    await engine.close();
+  }
+  await assert.rejects(stat(daemonInfoPath(dir)), "info file removed on close");
+});
+
+test("rejects missing tokens, foreign hosts and foreign origins", async () => {
+  const { engine, daemon } = await setup();
+  const { url, token, port } = daemon.info;
+  const rpc = (headers: Record<string, string>) =>
+    fetch(`${url}/rpc`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "project.get" }),
+    });
+  try {
+    assert.equal((await rpc({})).status, 401);
+    assert.equal((await rpc({ authorization: "Bearer wrong" })).status, 401);
+    assert.equal((await rpc({ authorization: `Bearer ${token}`, origin: "http://evil.example" })).status, 403);
+    assert.equal((await rpc({ authorization: `Bearer ${token}`, origin: `http://localhost:${port}` })).status, 200);
+    assert.equal((await fetch(`${url}/stream`)).status, 401);
+    assert.equal((await fetch(`${url}/mcp`, { method: "POST" })).status, 401);
+    // Static dashboard needs no token but must not leak data or traverse.
+    assert.equal((await fetch(`${url}/`)).status, 200);
+    assert.equal((await fetch(`${url}/..%2Fpackage.json`)).status, 404);
+  } finally {
+    await daemon.close();
+    await engine.close();
+  }
+});
+
+test("MCP over HTTP shares the daemon's engine", async () => {
+  const { engine, daemon, client } = await setup();
+  const mcp = new Client({ name: "agent", version: "0" });
+  try {
+    await mcp.connect(
+      new StreamableHTTPClientTransport(new URL(`${daemon.info.url}/mcp`), {
+        requestInit: { headers: { authorization: `Bearer ${daemon.info.token}` } },
+      }),
+    );
+    const r = await mcp.callTool({ name: "uefn_run_tests", arguments: {} });
+    const summary = JSON.parse((r.content as { text: string }[])[0]!.text);
+    assert.equal(summary.status, "passed");
+    // The run the agent made is visible to every other client.
+    const history = await client.call("runs.list", {});
+    assert.equal(history.runs.length, 1);
+    const state = await client.call("state.get", {});
+    assert.ok(state.eventCount > 0);
+  } finally {
+    await mcp.close();
+    await daemon.close();
+    await engine.close();
+  }
+});

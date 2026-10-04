@@ -31,16 +31,6 @@ function fail(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
-/** Serialises operations that touch the session, so concurrent agent calls cannot interleave runs. */
-class Mutex {
-  private tail: Promise<unknown> = Promise.resolve();
-  run<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.tail.then(fn, fn);
-    this.tail = next.catch(() => {});
-    return next;
-  }
-}
-
 /** Compact, agent-oriented view of a run: verdicts, failures and where the evidence is. */
 export function summarizeRun(summary: RunSummary): Record<string, unknown> {
   return {
@@ -85,7 +75,7 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
   const permissions: PermissionSet = resolvePermissions(engine.config.mcp_server, options.mode);
   const audit = new AuditLog(join(engine.root, ".devtools", "audit.log"));
   const actor = options.actor ?? "mcp-client";
-  const lock = new Mutex();
+  const lock = { run: <T>(fn: () => Promise<T>) => engine.exclusive(fn) };
   const server = new McpServer({ name: "uefn-devtools", version: "0.1.0" });
 
   const guarded = <A>(name: string, scope: Permission, handler: (args: A) => Promise<ToolResult>) =>

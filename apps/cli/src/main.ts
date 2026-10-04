@@ -4,7 +4,7 @@ import { watch } from "node:fs";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { CONFIG_FILE, DevToolsEngine, EventStore, captureGitInfo, formatCausalTree } from "@uefn-devtools/core";
+import { CONFIG_FILE, DevToolsEngine, loadConfig, EventStore, captureGitInfo, formatCausalTree } from "@uefn-devtools/core";
 import { RuntimeEvent } from "@uefn-devtools/protocol";
 import { consoleReporter, runTests } from "@uefn-devtools/test";
 
@@ -19,6 +19,7 @@ Commands
   test [filter]          Compile, start/reuse a session, run tests, assert
   trace <event-id>       Causal tree of an event from a recorded events.jsonl
   mcp                    Serve the DevTools MCP server over stdio
+  daemon                 Shared engine: dashboard, JSON-RPC, MCP over HTTP
   init                   Write a starter ${CONFIG_FILE}
 
 Global options
@@ -33,12 +34,17 @@ test options
   --no-compile           Skip the Verse build stage
   --watch                Re-run when Verse or test files change
   --verbose              Print every iteration with --repeat
+  --daemon               Run through the running daemon (visible on its dashboard)
 
 trace options
   --file <events.jsonl>  Recorded events (from .devtools/results/...)
 
 mcp options
   --mode <mode>          read_only | development | full_access
+
+daemon options
+  --port <n>             Port on 127.0.0.1 (default 4917; 0 = any free port)
+                         Token: random per start, or UEFN_DEVTOOLS_TOKEN
 `;
 
 type Values = {
@@ -53,6 +59,8 @@ type Values = {
   verbose?: boolean;
   file?: string;
   mode?: string;
+  port?: string;
+  daemon?: boolean;
   help?: boolean;
 };
 
@@ -72,6 +80,8 @@ function parse(argv: string[]): { command?: string; positionals: string[]; value
       verbose: { type: "boolean" },
       file: { type: "string" },
       mode: { type: "string" },
+      port: { type: "string" },
+      daemon: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -167,6 +177,7 @@ async function cmdCompile(values: Values): Promise<number> {
 
 async function cmdTest(values: Values, positionals: string[]): Promise<number> {
   if (values.watch) return watchTests();
+  if (values.daemon) return testViaDaemon(values, positionals);
   const engine = await openEngine(values);
   try {
     const repeat = int(values.repeat, "repeat");
@@ -260,6 +271,64 @@ async function cmdMcp(values: Values): Promise<number> {
   return new Promise<number>(() => {});
 }
 
+async function testViaDaemon(values: Values, positionals: string[]): Promise<number> {
+  const { DaemonClient } = await import("@uefn-devtools/daemon");
+  const { root } = await loadConfig(process.cwd(), values.config);
+  const client = await DaemonClient.discover(root);
+  if (!client) throw new UsageError("no daemon is running for this project (start one with 'uefn daemon')");
+  const repeat = int(values.repeat, "repeat");
+  const seed = int(values.seed, "seed");
+  const reporter = values.json ? undefined : consoleReporter({ verbose: values.verbose === true });
+  const abort = new AbortController();
+  const stream = client.stream(abort.signal);
+  // Subscribe before starting the run so no progress is missed.
+  const first = await stream.next();
+  if (first.done) throw new Error("daemon closed the event stream");
+  const { runId } = (await client.call("tests.run", {
+    ...(positionals[0] ? { filter: positionals[0] } : {}),
+    ...(repeat !== undefined ? { repeat } : {}),
+    ...(seed !== undefined ? { seed } : {}),
+    compile: values["no-compile"] !== true,
+  })) as { runId: string };
+  for await (const message of stream) {
+    if (message.channel !== "activity" || message.runId !== runId) continue;
+    const event = message.data as Parameters<ReturnType<typeof consoleReporter>>[0];
+    reporter?.(event);
+    if (event.kind === "done") {
+      abort.abort();
+      if (values.json) process.stdout.write(JSON.stringify(event.summary, null, 2) + "\n");
+      return event.summary.status === "passed" ? 0 : event.summary.status === "failed" ? 1 : 2;
+    }
+  }
+  throw new Error("daemon stream ended before the run finished");
+}
+
+async function cmdDaemon(values: Values): Promise<number> {
+  const { startDaemon, DEFAULT_PORT } = await import("@uefn-devtools/daemon");
+  const engine = await openEngine(values);
+  const port = int(values.port, "port") ?? DEFAULT_PORT;
+  // A fixed token lets agent configs (MCP over HTTP) survive daemon restarts.
+  const fixedToken = process.env["UEFN_DEVTOOLS_TOKEN"];
+  if (fixedToken !== undefined && fixedToken.length < 24) throw new UsageError("UEFN_DEVTOOLS_TOKEN must be at least 24 characters");
+  const daemon = await startDaemon({ engine, port, ...(fixedToken ? { token: fixedToken } : {}) });
+  const { url, token } = daemon.info;
+  console.log(`UEFN DevTools daemon for ${(await engine.project()).name} (${engine.adapter.name} adapter)`);
+  console.log("");
+  console.log(`  Dashboard  ${url}/#token=${token}`);
+  console.log(`  MCP        ${url}/mcp   (header  Authorization: Bearer <token>)`);
+  console.log(`  JSON-RPC   ${url}/rpc`);
+  console.log("");
+  console.log("Token and port are in .devtools/daemon.json (readable only by you). Ctrl+C to stop.");
+  const shutdown = async () => {
+    await daemon.close().catch(() => {});
+    await engine.close().catch(() => {});
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  return new Promise<number>(() => {});
+}
+
 const STARTER_CONFIG = `# UEFN DevTools configuration
 project:
   name: MyIsland
@@ -325,6 +394,8 @@ async function main(): Promise<number> {
       return cmdTrace(values, positionals);
     case "mcp":
       return cmdMcp(values);
+    case "daemon":
+      return cmdDaemon(values);
     case "init":
       return cmdInit();
     default:

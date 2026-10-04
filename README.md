@@ -36,12 +36,14 @@ Duration: 0.83s
 |---|---|
 | Test runner: TS + YAML, lifecycle state machine, repeat/seed, failure correlation, artifacts | working |
 | Engine: event store, derived state, causal traces, time-travel replay, git capture | working |
-| CLI: `status`, `capabilities`, `compile`, `test`, `trace`, `mcp`, `init` | working |
-| MCP server (20 tools, permission modes, audit log) | working |
+| CLI: `status`, `capabilities`, `compile`, `test`, `trace`, `mcp`, `daemon`, `init` | working |
+| MCP server (20 tools, permission modes, audit log), over stdio or HTTP | working |
+| Daemon: one shared engine for CLI, dashboard and agents (JSON-RPC, SSE, MCP over HTTP) | working |
+| Dashboard: tests, live runs, run history, event timeline with causal chains, runtime state | working (browser; Tauri shell not started) |
 | Simulated adapter: deterministic capture-point world with fault injection | working |
 | UEFN MCP adapter + log-file transport | written, **not yet verified against UEFN** |
 | Verse runtime emitter (`runtime/verse`) | written, **not yet compiled in UEFN** |
-| Desktop app, daemon, recorder, doctor, deps graph, profiler | not started |
+| Recorder, doctor, deps graph, profiler, desktop (Tauri) shell | not started |
 
 Everything runs today against the **simulated adapter**. That covers
 developing the engine, test API and agent loop. It does not prove the
@@ -72,7 +74,33 @@ player.entered_area (device=CapturePointA, player=player1, team=1)
       └─ score.changed (team=1, delta=50)
 ```
 
+## Dashboard and daemon
+
+```
+cd examples/capture-point
+node ../../apps/cli/dist/main.js daemon
+#   Dashboard  http://127.0.0.1:4917/#token=…
+#   MCP        http://127.0.0.1:4917/mcp
+```
+
+The daemon holds one engine and session. The dashboard, `uefn test --daemon`,
+and agents connected to `/mcp` all share it. A run started by any of them
+appears live everywhere, and run history persists in `.devtools/results`. The
+daemon binds 127.0.0.1 only, requires the bearer token on every data route,
+and rejects foreign `Host`/`Origin` headers.
+
 ## Using it from an agent
+
+Over HTTP through the daemon, so the dashboard shows what the agent does:
+
+```
+export UEFN_DEVTOOLS_TOKEN=$(openssl rand -base64 32)   # stable across restarts
+uefn daemon &
+claude mcp add --transport http uefn-devtools http://127.0.0.1:4917/mcp \
+  --header "Authorization: Bearer $UEFN_DEVTOOLS_TOKEN"
+```
+
+Or over stdio, as a private engine:
 
 ```json
 {
@@ -100,6 +128,7 @@ packages/uefn          UEFNAdapter, RuntimeTransport, simulator, MCP adapter, lo
 packages/core          DevToolsEngine, event store, state reducer, git, audit
 packages/test          test()/expect(), YAML tests, runner, reporter
 packages/mcp           MCP server
+packages/daemon        daemon (JSON-RPC, SSE, MCP over HTTP) and the dashboard
 runtime/verse          in-game DevTools emitter
 examples/capture-point example island config, Verse and tests
 docs/                  architecture, protocol, tests, capabilities

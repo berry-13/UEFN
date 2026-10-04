@@ -33,6 +33,13 @@ export class CommandError extends Error {
   }
 }
 
+/** Something that happened in the engine that clients may want to mirror (runner progress, etc.). */
+export interface ActivityEvent {
+  source: string;
+  runId?: string;
+  data: unknown;
+}
+
 export interface EngineOptions {
   cwd?: string;
   configPath?: string;
@@ -65,6 +72,8 @@ export class DevToolsEngine {
   private pump?: Promise<void>;
   private ready = false;
   private connected = false;
+  private lockTail: Promise<unknown> = Promise.resolve();
+  private readonly activityListeners = new Set<(event: ActivityEvent) => void>();
   lastCompile?: CompileResult;
 
   private constructor(
@@ -83,6 +92,26 @@ export class DevToolsEngine {
     const loaded = await loadConfig(options.cwd ?? process.cwd(), options.configPath);
     const adapter = options.adapterInstance ?? createAdapter(loaded, options.adapter ?? loaded.config.adapter);
     return new DevToolsEngine(loaded, adapter);
+  }
+
+  /**
+   * Runs `fn` with exclusive use of the session. Every client (CLI, MCP,
+   * daemon RPC) goes through this so concurrent callers cannot interleave
+   * test runs or session changes.
+   */
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.lockTail.then(fn, fn);
+    this.lockTail = next.catch(() => {});
+    return next;
+  }
+
+  publishActivity(event: ActivityEvent): void {
+    for (const listener of this.activityListeners) listener(event);
+  }
+
+  onActivity(listener: (event: ActivityEvent) => void): () => void {
+    this.activityListeners.add(listener);
+    return () => this.activityListeners.delete(listener);
   }
 
   get config(): DevToolsConfig {

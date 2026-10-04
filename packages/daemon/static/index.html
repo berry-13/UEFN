@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UEFN DevTools</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">◆</span> <span id="project-name">UEFN DevTools</span></div>
+    <div class="session"><span id="session-dot" class="dot"></span> <span id="session-label">Disconnected</span></div>
+  </header>
+  <div class="layout">
+    <nav class="sidebar" id="nav">
+      <a href="#overview" data-view="overview">Overview</a>
+      <a href="#tests" data-view="tests">Tests</a>
+      <a href="#runs" data-view="runs">Runs</a>
+      <a href="#events" data-view="events">Events</a>
+      <a href="#runtime" data-view="runtime">Runtime</a>
+    </nav>
+    <main id="main" aria-live="polite"></main>
+  </div>
+  <footer class="statusbar">
+    <span id="sb-adapter">adapter —</span>
+    <span id="sb-runtime">runtime —</span>
+    <span id="sb-verse">Verse —</span>
+    <span id="sb-events">0 events</span>
+    <span id="sb-run" class="grow"></span>
+  </footer>
+</body>
+</html>

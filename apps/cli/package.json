@@ -5,12 +5,15 @@
   "bin": {
     "uefn": "./dist/main.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@uefn-devtools/core": "workspace:*",
     "@uefn-devtools/mcp": "workspace:*",
     "@uefn-devtools/protocol": "workspace:*",
     "@uefn-devtools/test": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.32.0"
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@uefn-devtools/daemon": "workspace:*"
   }
 }

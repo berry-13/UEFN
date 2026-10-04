@@ -7,3 +7,4 @@ export * from "./testing.ts";
 export * from "./commands.ts";
 export * from "./wire.ts";
 export * from "./config.ts";
+export * from "./rpc.ts";

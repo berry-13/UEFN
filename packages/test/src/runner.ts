@@ -14,11 +14,20 @@ export type RunnerEvent =
   | { kind: "stage"; stage: RunStage; test?: string; iteration?: number; at: number }
   | { kind: "discovered"; tests: { id: string; name: string; file: string }[]; errors: { file: string; message: string }[] }
   | { kind: "session"; sessionId: string; reused: boolean }
-  | { kind: "attempt"; test: TestDefinition; attempt: TestAttempt; repeat: number }
+  | { kind: "attempt"; test: TestRef; attempt: TestAttempt; repeat: number }
   | { kind: "test"; result: TestResult }
   | { kind: "done"; summary: RunSummary };
 
+/** Serializable reference to a test (definitions carry functions). */
+export interface TestRef {
+  id: string;
+  name: string;
+  file: string;
+}
+
 export interface RunOptions {
+  /** Defaults to a time-based id. */
+  runId?: string;
   filter?: string;
   /** Run each test N times (flaky detection, spec §25). */
   repeat?: number;
@@ -43,15 +52,25 @@ class StageError extends Error {
   }
 }
 
+let runCounter = 0;
+export function newRunId(): string {
+  return `run_${Date.now().toString(36)}${(runCounter++ % 36).toString(36)}`;
+}
+
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 /** Executes tests through the formal lifecycle (spec §8) and returns a deterministic verdict. */
 export async function runTests(engine: DevToolsEngine, options: RunOptions = {}): Promise<RunSummary> {
-  const emit = options.onEvent ?? (() => {});
   const started = Date.now();
-  const runId = `run_${started.toString(36)}`;
+  const runId = options.runId ?? newRunId();
+  // Runner progress is mirrored onto the engine so other clients (daemon,
+  // dashboard) can follow runs started by anyone.
+  const emit = (event: RunnerEvent) => {
+    options.onEvent?.(event);
+    engine.publishActivity({ source: "runner", runId, data: event });
+  };
   const artifactRoot = resolve(engine.root, engine.config.paths.results, today(), runId);
   const stage = (s: RunStage, test?: string, iteration?: number) =>
     emit({ kind: "stage", stage: s, at: Date.now(), ...(test ? { test } : {}), ...(iteration !== undefined ? { iteration } : {}) });
@@ -136,7 +155,7 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
           if (attempt.status === "passed") break;
         }
         attempts.push(attempt!);
-        emit({ kind: "attempt", test: def, attempt: attempt!, repeat });
+        emit({ kind: "attempt", test: { id: def.id, name: def.name, file: relative(engine.root, def.file) }, attempt: attempt!, repeat });
       }
       const passed = attempts.filter((a) => a.status === "passed").length;
       const result: TestResult = {

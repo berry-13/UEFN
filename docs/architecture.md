@@ -1,10 +1,14 @@
 # Architecture
 
 ```
- CLI (apps/cli)      MCP server (packages/mcp)      [desktop — later]
-        │                     │
-        └──────────┬──────────┘
-                   ▼
+ CLI (apps/cli)   Dashboard (browser)   Agent (MCP over HTTP)   Agent (MCP stdio)
+        │                 │                    │                      │
+        │        ┌────────┴────────────────────┘                      │
+        │        ▼                                                    │
+        │   Daemon (packages/daemon)  /rpc · /stream · /mcp · /       │
+        │        │                                                    │
+        └────────┴──────────────────┬─────────────────────────────────┘
+                                    ▼
           DevToolsEngine (packages/core)
           ├── EventStore      append-only RuntimeEvent log, queries, causal trees
           ├── GameState       derived by applyEvent(); replayable (stateAt)
@@ -30,6 +34,7 @@
 | `@uefn-devtools/core` | `DevToolsEngine`: config, project discovery, git capture, event store, state reducer, waits, audit log. |
 | `@uefn-devtools/test` | Playwright-style test API, YAML tests, runner state machine, reporter, failure correlation, artifacts. |
 | `@uefn-devtools/mcp` | MCP tools over the engine, with permission scopes and an audit trail. |
+| `@uefn-devtools/daemon` | Shared engine over HTTP on 127.0.0.1: JSON-RPC, server-sent events, MCP (Streamable HTTP) and the dashboard. |
 | `@uefn-devtools/cli` | `uefn` command. |
 
 ## Decisions
@@ -50,16 +55,26 @@
 - **Deterministic simulation.** Simulator faults use a seeded PRNG. Iteration
   *i* of `--repeat` uses seed `seed + i`, so a failing iteration can be
   re-run exactly.
-- **In-process engine for the MVP.** CLI and MCP each embed an engine. The
-  daemon from spec §83 (several clients sharing one session) is the next
-  structural step. `DevToolsEngine` is already the boundary it would wrap.
+- **Engine in process, or shared through the daemon.** `uefn test` and
+  `uefn mcp` embed a private engine. `uefn daemon` hosts one engine for every
+  client (spec §83). Every session-touching operation goes through
+  `engine.exclusive()`, so an agent's run and a dashboard click queue rather
+  than interleave. Runner progress is published on the engine
+  (`publishActivity`), so a run is visible wherever it was started.
+- **Dashboard without a build step.** Static HTML and JavaScript served by the
+  daemon under a strict CSP. Runtime data comes from game logs and is
+  untrusted, so it is rendered with `textContent` only. A Tauri desktop shell
+  can load the same page later.
+- **Long-lived processes re-import edited tests.** Node caches ES modules,
+  so the runner caches definitions per test file and re-imports a file
+  (cache-busted) only when its mtime changes.
 - **No arbitrary execution through MCP.** There is no shell tool. The only
   write is `uefn_create_test`, which validates the YAML, can write only a
   slug-named file inside the tests directory, and never overwrites.
 
 ## Not built yet
 
-These spec features are not implemented: desktop app, VS Code extension,
-daemon, SQLite persistence (artifacts are JSON/JSONL), recorder, doctor,
+These spec features are not implemented: Tauri desktop shell, VS Code extension,
+SQLite persistence (artifacts are JSON/JSONL), recorder, doctor,
 dependency graph, profiler, snapshots, GitHub integration, `--headed` and
 `--debug`.

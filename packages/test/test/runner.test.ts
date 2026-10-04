@@ -118,3 +118,30 @@ test("correlation needs both outcomes", () => {
   assert.deepEqual(correlateFailures([attempt("passed", 1)]), []);
   assert.equal(correlateFailures([attempt("passed", 1), attempt("failed", 3)]).length, 1);
 });
+
+test("typescript tests reload in a long-lived process", async () => {
+  const body = (score: number) => `
+    import { expect, test } from "@uefn-devtools/test";
+    test("reloadable", async ({ game }) => {
+      await game.start();
+      await game.player("p1", { team: 1 }).enter("A");
+      await expect(game.team(1)).toHaveScore(${score}, { timeout: "3s" });
+    });
+  `;
+  const dir = await project(CONFIG(), { "r.test.ts": body(50) });
+  await mkdir(join(dir, "node_modules", "@uefn-devtools"), { recursive: true });
+  const { symlink, utimes } = await import("node:fs/promises");
+  await symlink(new URL("..", import.meta.url).pathname, join(dir, "node_modules", "@uefn-devtools", "test"));
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const first = await runTests(engine, { keepSession: true });
+  const second = await runTests(engine, { keepSession: true, skipBuild: true });
+  assert.equal(first.status, "passed");
+  assert.equal(second.tests.length, 1, "cached module must still yield its tests");
+  const file = join(dir, "Tests", "r.test.ts");
+  await writeFile(file, body(75));
+  const later = new Date(Date.now() + 5000);
+  await utimes(file, later, later);
+  const third = await runTests(engine, { skipBuild: true });
+  await engine.close();
+  assert.equal(third.status, "failed", "edited test must be re-imported");
+});

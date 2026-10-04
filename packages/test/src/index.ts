@@ -10,7 +10,7 @@ export {
   EventExpectation,
 } from "./fixtures.ts";
 export type { TestDefinition, TestBody, TestFixtures, TestOptions } from "./context.ts";
-export { runTests, type RunOptions, type RunnerEvent } from "./runner.ts";
+export { runTests, newRunId, type RunOptions, type RunnerEvent, type TestRef } from "./runner.ts";
 export { consoleReporter, type ReporterOptions } from "./reporter.ts";
 export { loadTests, findTestFiles, filterTests } from "./discover.ts";
 export { loadYamlTests, YamlTestSchema } from "./yaml.ts";
