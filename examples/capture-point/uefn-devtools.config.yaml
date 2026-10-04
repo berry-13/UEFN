@@ -1,0 +1,41 @@
+project:
+  name: CapturePoint
+
+paths:
+  verse: ./Verse
+  tests: ./Tests
+
+# Runs against the built-in simulator. Switch to `mcp` (and fill in the
+# `mcp` and `runtime` sections) to run the same tests against UEFN.
+adapter: simulated
+
+simulated:
+  time_scale: 20
+  teams: 2
+  devices:
+    - id: CapturePointA
+      location: [1200, 400, 0]
+      capture_time_ms: 5000
+      score: 50
+    - id: CapturePointB
+      location: [-900, 300, 0]
+      capture_time_ms: 8000
+      score: 100
+
+mcp:
+  # command: <launcher for the UEFN MCP server>
+  # Fill these in from `uefn capabilities --adapter mcp`:
+  #   compile, start_session, stop_session, session_state, project_info
+  tools: {}
+
+runtime:
+  # log_path: C:/Users/<you>/AppData/Local/UnrealEditorFortnite/Saved/Logs/UnrealEditorFortnite.log
+  ready_timeout: 120s
+
+tests:
+  timeout: 30s
+  retries: 0
+  expect_timeout: 15s
+
+mcp_server:
+  mode: development

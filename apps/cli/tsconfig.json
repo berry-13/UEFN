@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/protocol" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/test" },
+    { "path": "../../packages/mcp" }
+  ]
+}

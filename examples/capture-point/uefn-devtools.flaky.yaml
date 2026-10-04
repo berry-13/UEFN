@@ -1,0 +1,19 @@
+# Same project with an injected double-award fault, to demonstrate
+# `--repeat` reliability measurement and failure correlation.
+project:
+  name: CapturePoint
+
+adapter: simulated
+
+simulated:
+  time_scale: 50
+  devices:
+    - id: CapturePointA
+      location: [1200, 400, 0]
+      capture_time_ms: 5000
+      score: 50
+  faults:
+    double_award_probability: 0.07
+
+tests:
+  expect_timeout: 15s

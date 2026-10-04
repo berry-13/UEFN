@@ -1,0 +1,16 @@
+{
+  "name": "@uefn-devtools/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "uefn": "./dist/main.js"
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@uefn-devtools/core": "workspace:*",
+    "@uefn-devtools/mcp": "workspace:*",
+    "@uefn-devtools/protocol": "workspace:*",
+    "@uefn-devtools/test": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.0"
+  }
+}

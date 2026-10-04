@@ -1,0 +1,23 @@
+{
+  "name": "uefn-devtools",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Deterministic testing, debugging and observability layer over UEFN.",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b --noEmit false",
+    "test": "pnpm build && node --test \"packages/*/test/*.test.ts\"",
+    "uefn": "node apps/cli/dist/main.js",
+    "example": "pnpm build && cd examples/capture-point && node ../../apps/cli/dist/main.js test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9.3"
+  }
+}

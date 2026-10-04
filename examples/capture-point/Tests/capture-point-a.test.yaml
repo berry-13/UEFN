@@ -1,0 +1,31 @@
+name: Capture Point A
+id: capture-point-a
+
+setup:
+  - start_game
+  - spawn_player:
+      id: player1
+      team: 1
+
+steps:
+  - teleport:
+      player: player1
+      location: CapturePointA
+
+  - wait_for:
+      event: CaptureCompleted
+      timeout: 10s
+
+assert:
+  - device:
+      id: CapturePointA
+      state: Captured
+      owner: 1
+
+  - team:
+      id: 1
+      score: 50
+
+  - event:
+      type: ScoreChanged
+      times: 1
