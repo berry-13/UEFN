@@ -26,6 +26,7 @@ type Listener = (event: RuntimeEvent, index: number) => void;
 export class EventStore {
   private readonly events: RuntimeEvent[] = [];
   private readonly byId = new Map<string, RuntimeEvent>();
+  private readonly indexById = new Map<string, number>();
   private readonly listeners = new Set<Listener>();
 
   get size(): number {
@@ -41,6 +42,7 @@ export class EventStore {
     const index = this.events.length;
     this.events.push(event);
     this.byId.set(event.id, event);
+    this.indexById.set(event.id, index);
     for (const listener of this.listeners) listener(event, index);
   }
 
@@ -51,6 +53,11 @@ export class EventStore {
 
   get(id: string): RuntimeEvent | undefined {
     return this.byId.get(id);
+  }
+
+  /** Store index of an event, or -1. */
+  indexOf(id: string): number {
+    return this.indexById.get(id) ?? -1;
   }
 
   all(fromIndex = 0): readonly RuntimeEvent[] {

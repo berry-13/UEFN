@@ -251,19 +251,32 @@ export class GameFixture {
     await this.ctx.step(`Waited ${ms}ms`, () => this.ctx.engine.sleep(ms));
   }
 
+  /**
+   * Waits until the event has occurred since the test started; with
+   * `count`, until it has occurred at least that many times.
+   */
   async waitForEvent(
     type: string,
     payload?: Record<string, unknown>,
-    options: { timeout?: Duration } = {},
+    options: { timeout?: Duration; count?: number } = {},
   ): Promise<RuntimeEvent> {
     const normalized = normalizeEventType(type);
     const query: EventQuery = { type: normalized, ...(payload ? { payload } : {}) };
-    return this.ctx.step(`${normalized} observed`, () =>
-      this.ctx.engine.waitForEvent(query, {
-        timeoutMs: options.timeout !== undefined ? parseDuration(options.timeout) : this.ctx.expectTimeout,
-        fromIndex: this.ctx.startIndex,
-      }),
-    );
+    const count = Math.max(1, options.count ?? 1);
+    const timeoutMs = options.timeout !== undefined ? parseDuration(options.timeout) : this.ctx.expectTimeout;
+    return this.ctx.step(`${normalized} observed${count > 1 ? ` ${count}×` : ""}`, async () => {
+      const deadline = this.ctx.engine.now() + timeoutMs;
+      let fromIndex = this.ctx.startIndex;
+      let event: RuntimeEvent | undefined;
+      for (let seen = 0; seen < count; seen++) {
+        event = await this.ctx.engine.waitForEvent(query, {
+          timeoutMs: Math.max(0, deadline - this.ctx.engine.now()),
+          fromIndex,
+        });
+        fromIndex = this.ctx.engine.events.indexOf(event.id) + 1;
+      }
+      return event!;
+    });
   }
 }
 

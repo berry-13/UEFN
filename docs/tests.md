@@ -89,7 +89,10 @@ assert:
 
 Steps: `start_game`, `end_game`, `spawn_player`, `teleport`, `enter`,
 `leave`, `eliminate`, `damage`, `enable_device`, `disable_device`, `wait`,
-`wait_for`.
+`wait_for` (`{event, match?, timeout?, count?}`, where `count: n` waits for the
+nth occurrence since the test started).
+
+Tests can also be generated from a played session; see [recorder.md](recorder.md).
 
 Assertions: `device`, `team`, `player`, `event`, `probe`.
 

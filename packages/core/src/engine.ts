@@ -2,6 +2,8 @@ import { resolve } from "node:path";
 import type {
   CompileResult,
   DevToolsConfig,
+  Recording,
+  RecordingKind,
   GameState,
   Project,
   RuntimeCommand,
@@ -14,6 +16,7 @@ import { loadConfig, type LoadedConfig } from "./config.ts";
 import { EventStore, eventMatches, type EventQuery } from "./event-store.ts";
 import { captureGitInfo } from "./git.ts";
 import { discoverProject } from "./project.ts";
+import { newRecordingId, saveRecording, type ActiveRecording } from "./recording.ts";
 import { applyEvent } from "./state.ts";
 
 export class TimeoutError extends Error {
@@ -75,6 +78,7 @@ export class DevToolsEngine {
   private lockTail: Promise<unknown> = Promise.resolve();
   private readonly activityListeners = new Set<(event: ActivityEvent) => void>();
   lastCompile?: CompileResult;
+  private recording?: ActiveRecording;
 
   private constructor(
     readonly loaded: LoadedConfig,
@@ -254,6 +258,53 @@ export class DevToolsEngine {
         reject(new TimeoutError(`timed out after ${options.timeoutMs}ms waiting for ${describeQuery(query)}`));
       });
     });
+  }
+
+  get activeRecording(): ActiveRecording | undefined {
+    return this.recording;
+  }
+
+  /** Starts capturing runtime events (spec §21). One recording at a time. */
+  startRecording(options: { name?: string; kind?: RecordingKind } = {}): ActiveRecording {
+    if (!this.currentSession || this.currentSession.status === "stopped") {
+      throw new Error("start a session before recording");
+    }
+    if (this.recording) throw new Error(`recording ${this.recording.id} is already in progress`);
+    const id = newRecordingId();
+    this.recording = {
+      id,
+      name: options.name ?? (options.kind === "bug" ? "Bug recording" : "Recording"),
+      kind: options.kind ?? "scenario",
+      fromIndex: this.events.mark(),
+      sessionStart: this.now(),
+      startedAt: Date.now(),
+    };
+    this.publishActivity({ source: "recorder", data: { kind: "started", recording: this.recording } });
+    return this.recording;
+  }
+
+  /** Stops the active recording and saves it under `.devtools/recordings`. */
+  async stopRecording(): Promise<{ recording: Recording; path: string }> {
+    const active = this.recording;
+    if (!active) throw new Error("no recording in progress");
+    this.recording = undefined;
+    const project = await this.project();
+    const recording: Recording = {
+      version: 1,
+      id: active.id,
+      name: active.name,
+      kind: active.kind,
+      project: project.name,
+      adapter: this.adapter.name,
+      startedAt: active.startedAt,
+      sessionStart: active.sessionStart,
+      durationMs: this.now() - active.sessionStart,
+      ...(this.currentSession?.git ? { git: this.currentSession.git } : {}),
+      events: [...this.events.all(active.fromIndex)],
+    };
+    const path = await saveRecording(this.root, recording);
+    this.publishActivity({ source: "recorder", data: { kind: "stopped", id: recording.id, path } });
+    return { recording, path };
   }
 
   /** Forgets derived state (not the event log) before a test starts. */

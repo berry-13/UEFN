@@ -5,8 +5,9 @@ import { readFile, writeFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { CONFIG_FILE, DevToolsEngine, loadConfig, EventStore, captureGitInfo, formatCausalTree } from "@uefn-devtools/core";
-import { RuntimeEvent } from "@uefn-devtools/protocol";
-import { consoleReporter, runTests } from "@uefn-devtools/test";
+import { RuntimeEvent, parseDuration, type RecordingSummary } from "@uefn-devtools/protocol";
+import { consoleReporter, generateTest, runTests, toTypeScript, toYaml, writeGeneratedTest } from "@uefn-devtools/test";
+import { formatRecordingSummary, listRecordings, loadRecording, summarizeRecording } from "@uefn-devtools/core";
 
 const HELP = `uefn — UEFN DevTools
 
@@ -18,6 +19,9 @@ Commands
   compile                Compile Verse through the adapter
   test [filter]          Compile, start/reuse a session, run tests, assert
   trace <event-id>       Causal tree of an event from a recorded events.jsonl
+  record                 Record a session; generate a test (or a bug report)
+  recordings             List saved recordings
+  generate-test <rec>    Generate a test from a recording id or file
   mcp                    Serve the DevTools MCP server over stdio
   daemon                 Shared engine: dashboard, JSON-RPC, MCP over HTTP
   init                   Write a starter ${CONFIG_FILE}
@@ -38,6 +42,14 @@ test options
 
 trace options
   --file <events.jsonl>  Recorded events (from .devtools/results/...)
+
+record / generate-test options
+  --name <name>          Recording / test name
+  --bug                  Bug recording: print an anomaly report, don't write a test
+  --duration <d>         Stop after this long (e.g. 30s); default: Ctrl+C
+  --format <yaml|ts>     Generated test format (default yaml)
+  --counts               Also assert exact milestone event counts
+  --print                generate-test: print instead of writing to the tests dir
 
 mcp options
   --mode <mode>          read_only | development | full_access
@@ -61,6 +73,12 @@ type Values = {
   mode?: string;
   port?: string;
   daemon?: boolean;
+  name?: string;
+  bug?: boolean;
+  duration?: string;
+  format?: string;
+  counts?: boolean;
+  print?: boolean;
   help?: boolean;
 };
 
@@ -82,6 +100,12 @@ function parse(argv: string[]): { command?: string; positionals: string[]; value
       mode: { type: "string" },
       port: { type: "string" },
       daemon: { type: "boolean" },
+      name: { type: "string" },
+      bug: { type: "boolean" },
+      duration: { type: "string" },
+      format: { type: "string" },
+      counts: { type: "boolean" },
+      print: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -329,6 +353,125 @@ async function cmdDaemon(values: Values): Promise<number> {
   return new Promise<number>(() => {});
 }
 
+function formatOf(values: Values): "yaml" | "ts" {
+  const f = values.format ?? "yaml";
+  if (f !== "yaml" && f !== "ts") throw new UsageError("--format must be yaml or ts");
+  return f;
+}
+
+/** Resolves on Ctrl+C or after --duration, whichever comes first. */
+function untilStopped(values: Values): Promise<void> {
+  return new Promise((resolveStop) => {
+    const done = () => {
+      process.off("SIGINT", done);
+      clearTimeout(timer);
+      resolveStop();
+    };
+    process.on("SIGINT", done);
+    const timer = values.duration ? setTimeout(done, parseDuration(values.duration)) : undefined;
+  });
+}
+
+async function cmdRecord(values: Values): Promise<number> {
+  const format = formatOf(values);
+  const kind = values.bug ? "bug" : "scenario";
+  const { root } = await loadConfig(process.cwd(), values.config);
+  const { DaemonClient } = await import("@uefn-devtools/daemon");
+  const client = values.adapter ? undefined : await DaemonClient.discover(root);
+  const banner = (where: string) =>
+    console.log(`● Recording${kind === "bug" ? " bug" : ""} via ${where}. Play now; ${values.duration ? `stopping after ${values.duration}` : "press Ctrl+C to stop"}.`);
+
+  let summary: RecordingSummary;
+  let written: string | undefined;
+  let notes: string[] = [];
+  if (client) {
+    const state = await client.call("state.get", {});
+    if (!state.session || state.session.status === "stopped") await client.call("session.start", {});
+    const started = await client.call("recording.start", { kind, ...(values.name ? { name: values.name } : {}) });
+    banner(`the daemon (${client.info.url}); its dashboard shows it live`);
+    await untilStopped(values);
+    const stopped = await client.call("recording.stop", {});
+    summary = stopped.summary;
+    if (kind === "scenario") {
+      try {
+        const generated = await client.call("recordings.generate", { id: started.id, format, counts: values.counts === true, write: true });
+        written = generated.written;
+        notes = generated.notes;
+      } catch (error) {
+        notes = [(error as Error).message];
+      }
+    }
+  } else {
+    const engine = await openEngine(values);
+    try {
+      await engine.startSession();
+      await engine.waitForRuntime();
+      engine.startRecording({ kind, ...(values.name ? { name: values.name } : {}) });
+      banner(`a private ${engine.adapter.name} session`);
+      if (engine.adapter.name === "simulated") {
+        console.log("  (Nobody plays a private simulated session. Run 'uefn daemon' and use the dashboard's simulator controls.)");
+      }
+      await untilStopped(values);
+      const { recording } = await engine.stopRecording();
+      summary = summarizeRecording(recording);
+      if (kind === "scenario") {
+        const generated = generateTest(recording, { counts: values.counts === true });
+        notes = generated.notes;
+        const { relative, resolve: res } = await import("node:path");
+        try {
+          written = relative(engine.root, await writeGeneratedTest(res(engine.root, engine.config.paths.tests), generated, format, { recordingId: recording.id }));
+        } catch (error) {
+          notes.push((error as Error).message);
+        }
+      }
+    } finally {
+      await engine.close();
+    }
+  }
+  console.log("");
+  console.log(formatRecordingSummary(summary));
+  console.log("");
+  console.log(`Saved .devtools/recordings/${summary.id}.json`);
+  if (written) console.log(`Generated test ${written}`);
+  for (const n of notes) console.log(`  note: ${n}`);
+  if (kind === "bug") console.log(`Turn it into a regression test with: uefn generate-test ${summary.id}`);
+  return 0;
+}
+
+async function cmdRecordings(values: Values): Promise<number> {
+  const { root } = await loadConfig(process.cwd(), values.config);
+  const list = await listRecordings(root);
+  print(values, list, () => {
+    if (list.length === 0) console.log("No recordings yet. Start one with 'uefn record'.");
+    for (const r of list) {
+      console.log(
+        `${r.id}  ${new Date(r.startedAt).toLocaleString()}  ${r.kind.padEnd(8)} ${(r.durationMs / 1000).toFixed(1).padStart(6)}s ` +
+          `${String(r.events).padStart(5)} events  ${r.anomalies.length ? `${r.anomalies.length} anomal${r.anomalies.length === 1 ? "y" : "ies"}  ` : ""}${r.name}`,
+      );
+    }
+  });
+  return 0;
+}
+
+async function cmdGenerateTest(values: Values, positionals: string[]): Promise<number> {
+  const ref = positionals[0];
+  if (!ref) throw new UsageError("usage: uefn generate-test <recording-id | recording.json> [--format yaml|ts] [--print]");
+  const format = formatOf(values);
+  const loaded = await loadConfig(process.cwd(), values.config);
+  const recording = await loadRecording(loaded.root, ref);
+  const generated = generateTest(recording, { counts: values.counts === true, ...(values.name ? { name: values.name } : {}) });
+  const source = { recordingId: recording.id };
+  if (values.print) {
+    process.stdout.write(format === "ts" ? toTypeScript(generated, source) : toYaml(generated, source));
+    return 0;
+  }
+  const { relative, resolve: res } = await import("node:path");
+  const path = await writeGeneratedTest(res(loaded.root, loaded.config.paths.tests), generated, format, source);
+  console.log(`Generated test ${relative(loaded.root, path)}`);
+  for (const n of generated.notes) console.log(`  note: ${n}`);
+  return 0;
+}
+
 const STARTER_CONFIG = `# UEFN DevTools configuration
 project:
   name: MyIsland
@@ -396,6 +539,12 @@ async function main(): Promise<number> {
       return cmdMcp(values);
     case "daemon":
       return cmdDaemon(values);
+    case "record":
+      return cmdRecord(values);
+    case "recordings":
+      return cmdRecordings(values);
+    case "generate-test":
+      return cmdGenerateTest(values, positionals);
     case "init":
       return cmdInit();
     default:

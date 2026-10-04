@@ -6,7 +6,7 @@ import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { formatCausalTree, type DevToolsEngine } from "@uefn-devtools/core";
+import { formatCausalTree, listRecordings, loadRecording, summarizeRecording, type DevToolsEngine } from "@uefn-devtools/core";
 import { createDevToolsMcpServer } from "@uefn-devtools/mcp";
 import {
   RpcErrorCode,
@@ -17,7 +17,18 @@ import {
   type RpcResponse,
   type StreamMessage,
 } from "@uefn-devtools/protocol";
-import { filterTests, findTestFiles, loadTests, newRunId, normalizeEventType, runTests } from "@uefn-devtools/test";
+import {
+  filterTests,
+  findTestFiles,
+  generateTest,
+  loadTests,
+  newRunId,
+  normalizeEventType,
+  runTests,
+  toTypeScript,
+  toYaml,
+  writeGeneratedTest,
+} from "@uefn-devtools/test";
 import { findRunSummary, listRunSummaries } from "./runs.ts";
 
 export const DEFAULT_PORT = 4917;
@@ -118,6 +129,9 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
         ? { success: engine.lastCompile.success, durationMs: engine.lastCompile.durationMs, diagnostics: engine.lastCompile.diagnostics }
         : null,
       running: [...running.values()],
+      recording: engine.activeRecording ?? null,
+      commands: engine.session && engine.session.status !== "stopped" ? engine.adapter.transport().supportedCommands() : [],
+      devices: await engine.adapter.getDevices().catch(() => []),
     }),
     "tests.list": async () => {
       const { tests, errors } = await loadTests(await findTestFiles(resolve(engine.root, engine.config.paths.tests)));
@@ -182,6 +196,33 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
         ...(p.fromIndex !== undefined ? { fromIndex: p.fromIndex } : {}),
       });
       return { total: all.length, nextIndex: engine.events.mark(), events: all.slice(-p.limit) };
+    },
+    "runtime.command": async (p) => {
+      await engine.command(p.command);
+      return { ok: true };
+    },
+    "recording.start": async (p) => engine.startRecording({ kind: p.kind, ...(p.name ? { name: p.name } : {}) }),
+    "recording.stop": async () => {
+      const { recording, path } = await engine.stopRecording();
+      return { path: relative(engine.root, path), summary: summarizeRecording(recording) };
+    },
+    "recordings.list": async () => ({ recordings: await listRecordings(engine.root) }),
+    "recordings.get": async (p) => {
+      const recording = await loadRecording(engine.root, p.id).catch(() => {
+        throw new RpcError(RpcErrorCode.InvalidParams, `unknown recording '${p.id}'`);
+      });
+      return { summary: summarizeRecording(recording), recording };
+    },
+    "recordings.generate": async (p) => {
+      const recording = await loadRecording(engine.root, p.id).catch(() => {
+        throw new RpcError(RpcErrorCode.InvalidParams, `unknown recording '${p.id}'`);
+      });
+      const generated = generateTest(recording, { counts: p.counts, ...(p.name ? { name: p.name } : {}) });
+      const source = { recordingId: recording.id };
+      const text = p.format === "ts" ? toTypeScript(generated, source) : toYaml(generated, source);
+      if (!p.write) return { source: text, notes: generated.notes };
+      const path = await writeGeneratedTest(resolve(engine.root, engine.config.paths.tests), generated, p.format, source);
+      return { source: text, notes: generated.notes, written: relative(engine.root, path) };
     },
     "events.trace": async (p) => {
       const tree = engine.events.causalTree(p.eventId);

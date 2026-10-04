@@ -53,7 +53,23 @@ const store = {
   /** Live runs keyed by runId. */
   live: new Map(),
   followRun: null,
+  recordings: [],
+  selectedRecording: null,
+  recordingDetail: null,
+  preview: null,
+  recordName: "",
+  recordKind: "scenario",
+  genFormat: "yaml",
+  genCounts: false,
+  /** Simulator control values survive re-renders. */
+  pg: { pid: "", team: 1, who: "", where: "", by: "(nobody)", dmg: 30 },
 };
+
+/** Live updates must not steal focus from a field the user is editing. */
+function editing() {
+  const el = document.activeElement;
+  return !!el && $("main").contains(el) && (el.tagName === "INPUT" || el.tagName === "SELECT");
+}
 
 let rpcId = 1;
 async function rpc(method, params = {}) {
@@ -79,7 +95,7 @@ function refreshStateSoon() {
     stateTimer = null;
     try { store.state = await rpc("state.get"); } catch { return; }
     renderChrome();
-    if (store.view === "overview" || store.view === "runtime") render();
+    if ((store.view === "overview" || store.view === "runtime" || store.view === "record") && !editing()) render();
   }, 250);
 }
 
@@ -93,6 +109,11 @@ function liveRun(runId) {
 }
 
 function onActivity(msg) {
+  if (msg.source === "recorder") {
+    refreshStateSoon();
+    if (msg.data.kind === "stopped") loadRecordings().then(() => selectRecording(msg.data.id));
+    return;
+  }
   if (msg.source !== "runner" || !msg.runId) return;
   const run = liveRun(msg.runId);
   const e = msg.data;
@@ -146,6 +167,10 @@ async function loadRuns() {
   try { store.runs = (await rpc("runs.list", { limit: 30 })).runs; } catch {}
   if (store.view === "runs" || store.view === "overview") render();
 }
+async function loadRecordings() {
+  try { store.recordings = (await rpc("recordings.list")).recordings; } catch {}
+  if (store.view === "record") render();
+}
 async function loadEvents() {
   try {
     const r = await rpc("events.query", { limit: 500 });
@@ -178,7 +203,9 @@ function renderChrome() {
   const snapshotRunning = (s?.running ?? []).some((r) => !store.live.get(r.runId)?.summary);
   const running = liveRunning || snapshotRunning;
   $("session-dot").className = "dot " + (running ? "busy" : status === "connected" || status === "playing" ? "on" : status === "failed" ? "err" : "");
-  $("session-label").textContent = running ? "Running tests" : status ? `Session ${status}` : "No session";
+  const recording = s?.recording;
+  $("session-label").textContent = recording ? `Recording ${recording.kind === "bug" ? "bug " : ""}"${recording.name}"` : running ? "Running tests" : status ? `Session ${status}` : "No session";
+  if (recording) $("session-dot").className = "dot err";
   $("sb-adapter").textContent = `adapter ${s?.adapter ?? store.daemon?.adapter ?? "—"}`;
   $("sb-runtime").textContent = s?.runtimeReady ? "runtime ready" : "runtime not ready";
   const c = s?.lastCompile;
@@ -421,7 +448,134 @@ function viewRuntime() {
   );
 }
 
-const VIEWS = { overview: viewOverview, tests: viewTests, runs: viewRuns, events: viewEvents, runtime: viewRuntime };
+async function selectRecording(id) {
+  store.selectedRecording = id;
+  store.recordingDetail = null;
+  store.preview = null;
+  render();
+  try { store.recordingDetail = (await rpc("recordings.get", { id })).summary; } catch (e) { store.recordingDetail = { error: e.message }; }
+  render();
+}
+
+async function previewTest(write) {
+  const id = store.selectedRecording;
+  if (!id) return;
+  try {
+    const r = await rpc("recordings.generate", { id, format: store.genFormat, counts: store.genCounts, write });
+    store.preview = r.source;
+    if (r.written) { toast(`Saved ${r.written}`); await loadTests(); }
+  } catch (e) { toast(`Generate failed: ${e.message}`); }
+  render();
+}
+
+async function startRecording() {
+  await act("Start recording", async () => {
+    if (!store.state?.session || store.state.session.status === "stopped") await rpc("session.start");
+    await rpc("recording.start", { kind: store.recordKind, ...(store.recordName ? { name: store.recordName } : {}) });
+  });
+}
+
+function command(cmd) {
+  return act(cmd.type.replace(/_/g, " "), () => rpc("runtime.command", { command: cmd }));
+}
+
+function playground() {
+  const s = store.state;
+  const can = new Set(s?.commands ?? []);
+  if (!can.has("spawn_player")) {
+    return h("div", { class: "notice" }, "This transport cannot drive the game. Play in UEFN while recording; DevTools observes through the runtime log.");
+  }
+  const players = Object.values(s.game.players).map((p) => p.id);
+  const devices = (s.devices ?? []).map((d) => d.id);
+  const pg = store.pg;
+  const bind = (key, num) => (e) => { pg[key] = num ? Number(e.target.value) : e.target.value; };
+  const select = (key, options, label) => {
+    if (!options.includes(pg[key])) pg[key] = options[0];
+    return h("select", { onchange: bind(key), "aria-label": label }, options.map((o) => h("option", { value: o, selected: o === pg[key] }, o)));
+  };
+  if (!pg.pid || players.includes(pg.pid)) pg.pid = `player${players.length + 1}`;
+  const pid = h("input", { placeholder: "player id", "aria-label": "new player id", value: pg.pid, size: 10, oninput: bind("pid") });
+  const team = h("input", { type: "number", min: 1, value: pg.team, title: "team", "aria-label": "team", oninput: bind("team", true) });
+  const who = select("who", players.length ? players : ["(spawn a player)"], "player");
+  const where = select("where", devices.length ? devices : ["(no devices)"], "area");
+  const by = select("by", ["(nobody)", ...players], "eliminated by");
+  const dmg = h("input", { type: "number", min: 1, value: pg.dmg, title: "damage", "aria-label": "damage amount", oninput: bind("dmg", true) });
+  const needPlayer = !players.length;
+  return h("div", {},
+    h("div", { class: "row" },
+      h("button", { onclick: () => command({ type: "start_game" }) }, "Start game"),
+      h("button", { onclick: () => command({ type: "end_game" }) }, "End game")),
+    h("div", { class: "row" }, "Spawn ", pid, " on team ", team,
+      h("button", { onclick: () => command({ type: "spawn_player", player: pg.pid, team: pg.team }) }, "Spawn")),
+    h("div", { class: "row" }, who, " → ", where,
+      h("button", { disabled: needPlayer, onclick: () => command({ type: "teleport", player: pg.who, location: pg.where }) }, "Enter area"),
+      h("button", { disabled: needPlayer, onclick: () => command({ type: "leave_area", player: pg.who, area: pg.where }) }, "Leave"),
+      h("button", { disabled: needPlayer, onclick: () => command({ type: "damage_player", player: pg.who, amount: pg.dmg }) }, "Damage"), dmg,
+      h("button", { disabled: needPlayer, onclick: () => command({ type: "eliminate_player", player: pg.who, ...(pg.by !== "(nobody)" ? { by: pg.by } : {}) }) }, "Eliminate"), " by ", by),
+  );
+}
+
+function viewRecord() {
+  const s = store.state;
+  const active = s?.recording;
+  const nameInput = h("input", { placeholder: "recording name", value: store.recordName, oninput: (e) => { store.recordName = e.target.value; } });
+  const kind = h("select", { onchange: (e) => { store.recordKind = e.target.value; } },
+    h("option", { value: "scenario", selected: store.recordKind === "scenario" }, "Scenario → test"),
+    h("option", { value: "bug", selected: store.recordKind === "bug" }, "Bug report"));
+  const controls = active
+    ? h("div", { class: "row" },
+        h("span", { class: "fail" }, `● Recording "${active.name}" (${active.kind})`),
+        h("span", { class: "muted" }, `since ${new Date(active.startedAt).toLocaleTimeString()}`),
+        h("button", { class: "primary", onclick: () => act("Stop recording", () => rpc("recording.stop")) }, "Stop recording"))
+    : h("div", { class: "row" }, nameInput, kind, h("button", { class: "primary", onclick: startRecording }, "Start recording"));
+
+  const rows = store.recordings.map((r) => h("tr", { class: `clickable ${r.id === store.selectedRecording ? "selected" : ""}`, onclick: () => selectRecording(r.id) },
+    h("td", {}, r.name, r.kind === "bug" ? h("span", { class: "badge fail" }, " bug") : null),
+    h("td", { class: "muted" }, new Date(r.startedAt).toLocaleString()),
+    h("td", {}, `${(r.durationMs / 1000).toFixed(1)}s`),
+    h("td", {}, r.events),
+    h("td", { class: r.anomalies.length ? "warn" : "muted" }, r.anomalies.length || "—")));
+
+  const d = store.recordingDetail;
+  let detail = h("div", { class: "empty" }, "Select a recording.");
+  if (store.selectedRecording && !d) detail = h("div", { class: "empty" }, "Loading…");
+  else if (d?.error) detail = h("div", { class: "fail" }, d.error);
+  else if (d) {
+    const format = h("select", { onchange: (e) => { store.genFormat = e.target.value; } },
+      h("option", { value: "yaml", selected: store.genFormat === "yaml" }, "YAML"),
+      h("option", { value: "ts", selected: store.genFormat === "ts" }, "TypeScript"));
+    const counts = h("input", { type: "checkbox", checked: store.genCounts, onchange: (e) => { store.genCounts = e.target.checked; } });
+    detail = h("div", {},
+      h("div", { class: "log" },
+        h("div", {}, h("b", {}, d.kind === "bug" ? "Bug Recording " : "Recording "), d.id),
+        h("div", {}, `Duration          ${(d.durationMs / 1000).toFixed(1)} seconds`),
+        h("div", {}, `Events            ${d.events}`),
+        h("div", {}, `Relevant devices  ${d.devices.length}  ${d.devices.join(", ")}`),
+        h("div", {}, `Players           ${d.players.length}  ${d.players.join(", ")}`),
+        h("div", {}, " "),
+        d.anomalies.length ? [h("div", {}, "Potential anomalies"), d.anomalies.map((a) => h("div", { class: a.severity === "error" ? "fail" : "warn" },
+          `  [${a.severity}] ${a.message}${a.traceIds.length ? `  (traces ${a.traceIds.join(", ")})` : ""}`))] : h("div", { class: "pass" }, "No anomalies detected.")),
+      h("div", { class: "row" }, format, h("label", { class: "muted" }, counts, " exact event counts"),
+        h("button", { onclick: () => previewTest(false) }, "Preview test"),
+        h("button", { class: "primary", onclick: () => previewTest(true) }, "Save to Tests")),
+      store.preview ? h("div", { class: "log" }, h("pre", {}, store.preview)) : null);
+  }
+
+  return h("div", {},
+    h("h1", {}, "Record"),
+    h("p", { class: "muted" }, "Play while recording. Actions become test steps; the final observed state becomes assertions."),
+    controls,
+    h("h2", {}, "Simulator controls"),
+    playground(),
+    h("h2", {}, "Recordings"),
+    h("div", { class: "split" },
+      store.recordings.length
+        ? h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "Recorded"), h("th", {}, "Duration"), h("th", {}, "Events"), h("th", {}, "Anomalies"))), h("tbody", {}, rows))
+        : h("div", { class: "empty" }, "No recordings yet."),
+      detail));
+}
+
+const VIEWS = { overview: viewOverview, record: viewRecord, tests: viewTests, runs: viewRuns, events: viewEvents, runtime: viewRuntime };
 
 function render() {
   const main = $("main");
@@ -449,7 +603,7 @@ async function boot() {
     return;
   }
   connectStream();
-  await Promise.all([loadTests(), loadRuns(), loadEvents(), (async () => { try { store.state = await rpc("state.get"); } catch {} })()]);
+  await Promise.all([loadTests(), loadRuns(), loadEvents(), loadRecordings(), (async () => { try { store.state = await rpc("state.get"); } catch {} })()]);
   navigate(location.hash.slice(1) || "overview");
 }
 boot();

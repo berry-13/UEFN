@@ -16,3 +16,5 @@ export { loadTests, findTestFiles, filterTests } from "./discover.ts";
 export { loadYamlTests, YamlTestSchema } from "./yaml.ts";
 export { correlateFailures } from "./correlate.ts";
 export { normalizeEventType } from "./names.ts";
+export { generateTest, toYaml, toTypeScript, writeGeneratedTest, type GeneratedTest, type GenerateOptions } from "./generate.ts";
+export type { YamlStep, YamlAssertion } from "./yaml.ts";

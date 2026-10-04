@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RuntimeCommand } from "./commands.ts";
 
 /**
  * Internal protocol between DevTools clients (CLI, dashboard, desktop) and
@@ -31,6 +32,21 @@ export const RpcParams = {
     })
     .default({ limit: 200 }),
   "events.trace": z.object({ eventId: z.string() }),
+  /** Drive the runtime directly (simulator playground; real transports may refuse). */
+  "runtime.command": z.object({ command: RuntimeCommand }),
+  "recording.start": z
+    .object({ name: z.string().max(120).optional(), kind: z.enum(["scenario", "bug"]).default("scenario") })
+    .default({ kind: "scenario" }),
+  "recording.stop": z.object({}).default({}),
+  "recordings.list": z.object({}).default({}),
+  "recordings.get": z.object({ id: z.string().regex(/^rec_[a-z0-9]+$/) }),
+  "recordings.generate": z.object({
+    id: z.string().regex(/^rec_[a-z0-9]+$/),
+    format: z.enum(["yaml", "ts"]).default("yaml"),
+    name: z.string().max(120).optional(),
+    counts: z.boolean().default(false),
+    write: z.boolean().default(false),
+  }),
 } as const;
 
 export type RpcMethod = keyof typeof RpcParams;

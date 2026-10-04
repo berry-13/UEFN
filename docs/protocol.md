@@ -103,10 +103,20 @@ attempt's trace), `state.json`, `compile.json` and `session.json`.
 | `uefn_start_session`, `uefn_stop_session`, `uefn_start_game`, `uefn_stop_game` | start_sessions |
 | `uefn_run_test`, `uefn_run_tests` | run_tests |
 | `uefn_create_test` | modify_project |
+| `uefn_start_recording`, `uefn_stop_recording` | start_sessions |
+| `uefn_list_recordings`, `uefn_generate_test_from_recording` | read_project (`write: true` also needs modify_project) |
 
 Modes: `read_only` (read_project), `development` (everything except
 modify_project; the default) and `full_access`. Every call, including denied
 ones, is appended to `.devtools/audit.log`.
+
+## Recording
+
+`.devtools/recordings/<id>.json`, schema `Recording` in
+`packages/protocol/src/recording.ts`: `{version: 1, id, name, kind: scenario | bug,
+project, adapter, startedAt, sessionStart, durationMs, git?, events}`. Event
+timestamps are on the session clock, and `sessionStart` marks the first moment
+recorded. See [recorder.md](recorder.md).
 
 ## Daemon
 
@@ -134,3 +144,7 @@ RPC methods (schemas in `packages/protocol/src/rpc.ts`):
 | `tests.run {filter?, repeat?, seed?, compile?}` | `{runId}` returned immediately; follow progress on `/stream` |
 | `runs.list {limit}`, `runs.get {runId}` | history from `.devtools/results` |
 | `events.query {type?, fromIndex?, limit}`, `events.trace {eventId}` | event log and causal trees |
+| `runtime.command {command}` | send a `RuntimeCommand` (simulator playground; transports that cannot drive the game refuse) |
+| `recording.start {name?, kind}`, `recording.stop` | start / stop the engine's recording; stop returns the summary |
+| `recordings.list`, `recordings.get {id}` | saved recordings with summaries and anomalies |
+| `recordings.generate {id, format, counts, write}` | generated test source; `write` saves it under the tests directory |

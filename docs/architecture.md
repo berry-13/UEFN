@@ -31,8 +31,8 @@
 |---|---|
 | `@uefn-devtools/protocol` | Zod schemas and types: events, traces, sessions, probes, test results, config, runtime wire format. No I/O. |
 | `@uefn-devtools/uefn` | `UEFNAdapter` and `RuntimeTransport` interfaces, plus implementations: simulator, UEFN MCP client, log-file transport. All Epic-specific code lives here. |
-| `@uefn-devtools/core` | `DevToolsEngine`: config, project discovery, git capture, event store, state reducer, waits, audit log. |
-| `@uefn-devtools/test` | Playwright-style test API, YAML tests, runner state machine, reporter, failure correlation, artifacts. |
+| `@uefn-devtools/core` | `DevToolsEngine`: config, project discovery, git capture, event store, state reducer, waits, recordings and anomaly rules, audit log. |
+| `@uefn-devtools/test` | Playwright-style test API, YAML tests, runner state machine, reporter, failure correlation, artifacts, test generation from recordings. |
 | `@uefn-devtools/mcp` | MCP tools over the engine, with permission scopes and an audit trail. |
 | `@uefn-devtools/daemon` | Shared engine over HTTP on 127.0.0.1: JSON-RPC, server-sent events, MCP (Streamable HTTP) and the dashboard. |
 | `@uefn-devtools/cli` | `uefn` command. |
@@ -75,6 +75,6 @@
 ## Not built yet
 
 These spec features are not implemented: Tauri desktop shell, VS Code extension,
-SQLite persistence (artifacts are JSON/JSONL), recorder, doctor,
+SQLite persistence (artifacts are JSON/JSONL), doctor,
 dependency graph, profiler, snapshots, GitHub integration, `--headed` and
 `--debug`.

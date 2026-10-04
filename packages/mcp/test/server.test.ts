@@ -84,3 +84,29 @@ test("permissions are enforced and invalid tests are rejected", async () => {
   await full.client.close();
   await full.engine.close();
 });
+
+test("agent records a session and generates a regression test", async () => {
+  const { engine, call } = await connect("full_access");
+  await call("uefn_start_session");
+  const started = await call("uefn_start_recording", { name: "Agent capture", kind: "bug" });
+  assert.equal(started.isError, false, started.text);
+  await engine.command({ type: "start_game" });
+  await engine.command({ type: "spawn_player", player: "p1", team: 1 });
+  await engine.command({ type: "teleport", player: "p1", location: "A" });
+  await engine.waitForEvent({ type: "score.changed" }, { timeoutMs: 10_000, fromIndex: 0 });
+  const stopped = await call("uefn_stop_recording");
+  assert.equal(stopped.json.summary.kind, "bug");
+  const source = await call("uefn_generate_test_from_recording", { recording_id: started.json.id, format: "ts" });
+  assert.match(source.text, /toHaveScore\(50\)/);
+  assert.match(source.text, /BUG RECORDING/);
+  const written = await call("uefn_generate_test_from_recording", { recording_id: started.json.id, write: true });
+  assert.match(written.json.written, /agent-capture\.recorded\.test\.yaml$/);
+  await engine.close();
+});
+
+test("generating with write=true needs modify_project", async () => {
+  const { engine, call } = await connect("development");
+  const r = await call("uefn_generate_test_from_recording", { recording_id: "rec_missing", write: true });
+  assert.match(r.text, /modify_project/);
+  await engine.close();
+});

@@ -22,9 +22,18 @@ const StepSchema = z.union([
   z.object({ enable_device: z.object({ id: z.string() }) }).strict(),
   z.object({ disable_device: z.object({ id: z.string() }) }).strict(),
   z.object({ wait: Duration }).strict(),
-  z.object({ wait_for: z.object({ event: z.string(), match: Payload.optional(), timeout: Duration.optional() }) }).strict(),
+  z.object({
+    wait_for: z.object({
+      event: z.string(),
+      match: Payload.optional(),
+      timeout: Duration.optional(),
+      /** Wait for the nth occurrence since the test started. */
+      count: z.number().int().positive().optional(),
+    }),
+  }).strict(),
 ]);
-type Step = z.infer<typeof StepSchema>;
+export type YamlStep = z.infer<typeof StepSchema>;
+type Step = YamlStep;
 
 const AssertSchema = z.union([
   z.object({
@@ -52,7 +61,8 @@ const AssertSchema = z.union([
   }).strict(),
   z.object({ probe: z.object({ id: z.string(), value: z.unknown() }) }).strict(),
 ]);
-type Assertion = z.infer<typeof AssertSchema>;
+export type YamlAssertion = z.infer<typeof AssertSchema>;
+type Assertion = YamlAssertion;
 
 export const YamlTestSchema = z.object({
   name: z.string(),
@@ -83,8 +93,8 @@ async function runStep(game: GameFixture, step: Step): Promise<void> {
   if ("disable_device" in step) return game.device(step.disable_device.id).disable();
   if ("wait" in step) return game.wait(step.wait);
   if ("wait_for" in step) {
-    const { event, match, timeout } = step.wait_for;
-    await game.waitForEvent(event, match, timeout !== undefined ? { timeout } : {});
+    const { event, match, timeout, count } = step.wait_for;
+    await game.waitForEvent(event, match, { ...(timeout !== undefined ? { timeout } : {}), ...(count !== undefined ? { count } : {}) });
     return;
   }
   const never: never = step;

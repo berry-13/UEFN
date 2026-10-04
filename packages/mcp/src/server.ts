@@ -1,11 +1,15 @@
 import { mkdir, writeFile, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { AuditLog, DevToolsEngine, formatCausalTree } from "@uefn-devtools/core";
+import { AuditLog, DevToolsEngine, formatCausalTree, listRecordings, loadRecording, summarizeRecording } from "@uefn-devtools/core";
 import type { RunSummary } from "@uefn-devtools/protocol";
 import {
   YamlTestSchema,
   filterTests,
+  generateTest,
+  toTypeScript,
+  toYaml,
+  writeGeneratedTest,
   findTestFiles,
   loadTests,
   normalizeEventType,
@@ -340,6 +344,66 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
       await writeFile(path, yaml.endsWith("\n") ? yaml : yaml + "\n");
       return ok({ created: relative(engine.root, path), test: parsed.data.name });
     }),
+  );
+
+  // ── recording ───────────────────────────────────────────────────────────
+  server.registerTool(
+    "uefn_start_recording",
+    {
+      description:
+        "Start recording runtime events from the current session (start one first). Use kind 'bug' while reproducing a problem: the stop result then includes an anomaly report.",
+      inputSchema: { name: z.string().max(120).optional(), kind: z.enum(["scenario", "bug"]).default("scenario") },
+    },
+    guarded("uefn_start_recording", "start_sessions", async (a: { name?: string; kind: "scenario" | "bug" }) =>
+      ok(engine.startRecording({ kind: a.kind, ...(a.name ? { name: a.name } : {}) })),
+    ),
+  );
+
+  server.registerTool(
+    "uefn_stop_recording",
+    { description: "Stop the active recording, save it, and return its summary (devices, players, traces, anomalies)." },
+    guarded("uefn_stop_recording", "start_sessions", async () => {
+      const { recording, path } = await engine.stopRecording();
+      return ok({ path: relative(engine.root, path), summary: summarizeRecording(recording) });
+    }),
+  );
+
+  server.registerTool(
+    "uefn_list_recordings",
+    { description: "Saved recordings, newest first, with summaries and anomalies." },
+    guarded("uefn_list_recordings", "read_project", async () => ok(await listRecordings(engine.root))),
+  );
+
+  server.registerTool(
+    "uefn_generate_test_from_recording",
+    {
+      description:
+        "Generate an editable test from a recording: recorded actions become steps, final observed state becomes assertions. Returns the source; set write=true to save it under the tests directory (needs modify_project). For bug recordings, change the observed assertions to the expected behaviour.",
+      inputSchema: {
+        recording_id: z.string().regex(/^rec_[a-z0-9]+$/),
+        format: z.enum(["yaml", "ts"]).default("yaml"),
+        name: z.string().max(120).optional(),
+        counts: z.boolean().default(false).describe("also assert exact milestone event counts"),
+        write: z.boolean().default(false),
+      },
+    },
+    guarded(
+      "uefn_generate_test_from_recording",
+      "read_project",
+      async (a: { recording_id: string; format: "yaml" | "ts"; name?: string; counts: boolean; write: boolean }) => {
+        if (a.write && !permissions.modify_project) {
+          return fail("permission 'modify_project' is not granted; call again with write=false to get the source");
+        }
+        const recording = await loadRecording(engine.root, a.recording_id);
+        const generated = generateTest(recording, { counts: a.counts, ...(a.name ? { name: a.name } : {}) });
+        const source = { recordingId: recording.id };
+        if (a.write) {
+          const path = await writeGeneratedTest(resolve(engine.root, engine.config.paths.tests), generated, a.format, source);
+          return ok({ written: relative(engine.root, path), notes: generated.notes });
+        }
+        return ok(a.format === "ts" ? toTypeScript(generated, source) : toYaml(generated, source));
+      },
+    ),
   );
 
   return server;

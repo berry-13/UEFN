@@ -49,6 +49,7 @@ classified as:
 | Device state | INSTRUMENTED | Verse subscribes to device events and emits | ☐ |
 | Game start / end commands | UNKNOWN | external → session channel not identified | ☐ |
 | Player actions (teleport, damage…) | INSTRUMENTED (proposed) | in-game *scenario device* runs the steps (below) | ☐ |
+| Recording + test generation | DERIVED | from runtime events; needs only the outbound channel | ✅ simulated · ☐ real |
 | Screenshots | UNKNOWN | — | ☐ |
 | Profiling (memory, game update) | UNKNOWN | UEFN memory/perf tooling, possibly MCP | ☐ |
 | Headless execution | likely BLOCKED | needs a Windows runner with UEFN + Fortnite (spec §40) | ☐ |
@@ -67,8 +68,10 @@ skip. Any one of these options could close the gap. All are unverified:
    damage, etc.) through the steps. Selecting a test means recompiling with
    a different generated scenario. This is slower, but it uses only
    supported APIs.
-3. **Manual + recorder.** The developer performs the actions while DevTools
-   observes and asserts. This is useful immediately, and it seeds the recorder.
+3. **Manual + recorder (implemented).** The developer plays in UEFN while
+   DevTools records what the runtime reports, then generates the test
+   (`uefn record`, [recorder.md](recorder.md)). It uses only the outbound
+   channel, so it works as soon as runtime events do.
 
 The simulated adapter implements every command, so the engine, the test API
 and the agent loop can be developed in the meantime.

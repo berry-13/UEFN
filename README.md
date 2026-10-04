@@ -36,14 +36,15 @@ Duration: 0.83s
 |---|---|
 | Test runner: TS + YAML, lifecycle state machine, repeat/seed, failure correlation, artifacts | working |
 | Engine: event store, derived state, causal traces, time-travel replay, git capture | working |
-| CLI: `status`, `capabilities`, `compile`, `test`, `trace`, `mcp`, `daemon`, `init` | working |
-| MCP server (20 tools, permission modes, audit log), over stdio or HTTP | working |
+| CLI: `status`, `capabilities`, `compile`, `test`, `trace`, `record`, `recordings`, `generate-test`, `mcp`, `daemon`, `init` | working |
+| MCP server (24 tools, permission modes, audit log), over stdio or HTTP | working |
 | Daemon: one shared engine for CLI, dashboard and agents (JSON-RPC, SSE, MCP over HTTP) | working |
 | Dashboard: tests, live runs, run history, event timeline with causal chains, runtime state | working (browser; Tauri shell not started) |
 | Simulated adapter: deterministic capture-point world with fault injection | working |
 | UEFN MCP adapter + log-file transport | written, **not yet verified against UEFN** |
 | Verse runtime emitter (`runtime/verse`) | written, **not yet compiled in UEFN** |
-| Recorder, doctor, deps graph, profiler, desktop (Tauri) shell | not started |
+| Recorder: record a session → generated test (YAML/TS); bug recordings with anomaly report | working ([docs](docs/recorder.md)) |
+| Doctor, deps graph, profiler, desktop (Tauri) shell | not started |
 
 Everything runs today against the **simulated adapter**. That covers
 developing the engine, test API and agent loop. It does not prove the
@@ -131,7 +132,7 @@ packages/mcp           MCP server
 packages/daemon        daemon (JSON-RPC, SSE, MCP over HTTP) and the dashboard
 runtime/verse          in-game DevTools emitter
 examples/capture-point example island config, Verse and tests
-docs/                  architecture, protocol, tests, capabilities
+docs/                  architecture, protocol, tests, recorder, capabilities
 ```
 
 ## Development

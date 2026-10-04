@@ -120,3 +120,42 @@ test("MCP over HTTP shares the daemon's engine", async () => {
     await engine.close();
   }
 });
+
+test("record via RPC with simulator commands, then generate and run the test", async () => {
+  const { engine, daemon, client } = await setup();
+  try {
+    await client.call("session.start", {});
+    const rec = await client.call("recording.start", { name: "Capture via RPC" });
+    for (const command of [
+      { type: "start_game" },
+      { type: "spawn_player", player: "p1", team: 1 },
+      { type: "teleport", player: "p1", location: "A" },
+    ]) await client.call("runtime.command", { command });
+    await engine.waitForEvent({ type: "score.changed" }, { timeoutMs: 10_000, fromIndex: 0 });
+    const stopped = await client.call("recording.stop", {});
+    assert.equal(stopped.summary.id, rec.id);
+    assert.deepEqual(stopped.summary.anomalies, []);
+
+    const listed = await client.call("recordings.list", {});
+    assert.equal(listed.recordings[0].id, rec.id);
+    const gen = await client.call("recordings.generate", { id: rec.id, write: true });
+    assert.match(gen.written, /^Tests\/capture-via-rpc\.recorded\.test\.yaml$/);
+    await assert.rejects(client.call("runtime.command", { command: { type: "fly" } }), DaemonRpcError);
+
+    const abort = new AbortController();
+    const stream = client.stream(abort.signal);
+    await stream.next();
+    const { runId } = await client.call("tests.run", { filter: "capture-via-rpc", compile: false });
+    for await (const m of stream) {
+      const data = m.channel === "activity" && m.runId === runId ? (m.data as { kind: string; summary?: { status: string } }) : undefined;
+      if (data?.kind === "done") {
+        assert.equal(data.summary?.status, "passed");
+        break;
+      }
+    }
+    abort.abort();
+  } finally {
+    await daemon.close();
+    await engine.close();
+  }
+});
