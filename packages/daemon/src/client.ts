@@ -1,4 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import { resolve } from "node:path";
+
+const canonical = (p: string) => realpath(resolve(p)).catch(() => resolve(p));
 import type { DaemonInfo, RpcMethod, RpcParamsOf, RpcResponse, StreamMessage } from "@uefn-devtools/protocol";
 import { daemonInfoPath } from "./server.ts";
 
@@ -28,7 +31,10 @@ export class DaemonClient {
     }
     const client = new DaemonClient(info);
     try {
-      await client.call("project.get", {});
+      // A stale file can point at a port now used by another project's
+      // daemon (which may even accept the same token). Only accept ours.
+      const project = (await client.call("project.get", {})) as { root?: string };
+      if (!project.root || (await canonical(project.root)) !== (await canonical(root))) return undefined;
       return client;
     } catch {
       return undefined; // stale file from a daemon that died

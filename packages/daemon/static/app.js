@@ -46,6 +46,8 @@ const store = {
   events: [],
   eventFilter: "",
   paused: false,
+  /** Snapshot shown while paused. */
+  frozen: null,
   selectedEvent: null,
   trace: null,
   selectedRun: null,
@@ -141,19 +143,45 @@ function onActivity(msg) {
 }
 
 function onRuntime(msg) {
-  if (store.paused) return;
+  // Pause freezes the timeline view, not the data: events keep arriving and
+  // are shown on resume.
   store.events.push({ index: msg.index, ...msg.event });
   if (store.events.length > MAX_EVENTS) store.events.splice(0, store.events.length - MAX_EVENTS);
   $("sb-events").textContent = `${msg.index + 1} events`;
-  if (store.view === "events") renderEventsTableOnly();
+  if (store.view === "events" && !store.paused) renderEventsTableOnly();
   refreshStateSoon();
+}
+
+/**
+ * The stream does not replay what was missed while disconnected, so after a
+ * reconnect reload everything and settle live runs whose `done` we missed.
+ */
+async function resync() {
+  await Promise.all([loadRuns(), loadEvents(), loadRecordings(), (async () => { try { store.state = await rpc("state.get"); } catch {} })()]);
+  const stillRunning = new Set((store.state?.running ?? []).map((r) => r.runId));
+  for (const run of store.live.values()) {
+    if (run.summary || stillRunning.has(run.runId)) continue;
+    try {
+      const s = await rpc("runs.get", { runId: run.runId });
+      if (s.status !== "running") run.summary = s;
+    } catch {
+      run.summary = { status: "error", error: "run finished while the dashboard was disconnected", durationMs: 0 };
+    }
+  }
+  render();
 }
 
 function connectStream() {
   const source = new EventSource(`/stream?token=${encodeURIComponent(token)}`);
+  let connectedBefore = false;
   source.onmessage = (m) => {
     const msg = JSON.parse(m.data);
-    if (msg.channel === "hello") { store.daemon = msg.daemon; renderChrome(); }
+    if (msg.channel === "hello") {
+      store.daemon = msg.daemon;
+      if (connectedBefore) resync();
+      connectedBefore = true;
+      renderChrome();
+    }
     else if (msg.channel === "runtime") onRuntime(msg);
     else if (msg.channel === "activity") onActivity(msg);
   };
@@ -393,7 +421,8 @@ async function selectEvent(e) {
 
 function eventRows() {
   const f = store.eventFilter.toLowerCase();
-  const list = f ? store.events.filter((e) => e.type.includes(f) || JSON.stringify(e.payload).toLowerCase().includes(f)) : store.events;
+  const source = store.frozen ?? store.events;
+  const list = f ? source.filter((e) => e.type.includes(f) || JSON.stringify(e.payload).toLowerCase().includes(f)) : source;
   return list.slice(-400).reverse().map((e) => h("tr", { class: `clickable ${store.selectedEvent?.id === e.id ? "selected" : ""}`, onclick: () => selectEvent(e) },
     h("td", { class: "mono muted" }, (e.timestamp / 1000).toFixed(3)),
     h("td", { class: "mono" }, e.type),
@@ -414,7 +443,8 @@ function viewEvents() {
   return h("div", {},
     h("h1", {}, "Events"),
     h("div", { class: "row" }, filter,
-      h("button", { onclick: () => { store.paused = !store.paused; render(); } }, store.paused ? "Resume" : "Pause"),
+      h("button", { onclick: () => { store.paused = !store.paused; store.frozen = store.paused ? store.events.slice() : null; render(); } }, store.paused ? "Resume" : "Pause"),
+      store.paused ? h("span", { class: "warn" }, "paused — new events are kept and shown on resume") : null,
       h("span", { class: "muted" }, `${store.events.length} shown (latest first)`)),
     h("div", { class: "split" },
       h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "t (s)"), h("th", {}, "Type"), h("th", {}, "Source"), h("th", {}, "Payload"))), h("tbody", { id: "events-body" }, eventRows())),

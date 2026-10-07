@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import type { DevToolsEngine } from "@uefn-devtools/core";
@@ -53,8 +54,10 @@ class StageError extends Error {
 }
 
 let runCounter = 0;
+/** Time-ordered and unique within a process (unbounded counter) and across processes (random). */
 export function newRunId(): string {
-  return `run_${Date.now().toString(36)}${(runCounter++ % 36).toString(36)}`;
+  runCounter++;
+  return `run_${Date.now().toString(36)}${runCounter.toString(36)}${randomBytes(3).toString("hex")}`;
 }
 
 function today(): string {
@@ -81,7 +84,7 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     const files = options.files
       ? options.files.map((f) => resolve(engine.root, f))
       : await findTestFiles(resolve(engine.root, engine.config.paths.tests));
-    const { tests, errors } = await loadTests(files);
+    const { tests, errors } = await loadTests(files, { root: engine.root });
     const selected = filterTests(tests, options.filter);
     emit({
       kind: "discovered",

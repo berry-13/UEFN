@@ -295,7 +295,7 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
     "uefn_list_tests",
     { description: "Discovered gameplay tests (TypeScript and YAML)." },
     guarded("uefn_list_tests", "read_project", async () => {
-      const { tests, errors } = await loadTests(await findTestFiles(resolve(engine.root, engine.config.paths.tests)));
+      const { tests, errors } = await loadTests(await findTestFiles(resolve(engine.root, engine.config.paths.tests)), { root: engine.root });
       return ok({
         tests: filterTests(tests).map((t) => ({ id: t.id, name: t.name, file: relative(engine.root, t.file), format: t.format })),
         errors,

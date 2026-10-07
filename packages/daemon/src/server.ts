@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, extname, join, relative, resolve } from "node:path";
@@ -134,7 +134,7 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
       devices: await engine.adapter.getDevices().catch(() => []),
     }),
     "tests.list": async () => {
-      const { tests, errors } = await loadTests(await findTestFiles(resolve(engine.root, engine.config.paths.tests)));
+      const { tests, errors } = await loadTests(await findTestFiles(resolve(engine.root, engine.config.paths.tests)), { root: engine.root });
       return {
         tests: filterTests(tests).map((t) => ({
           id: t.id,
@@ -162,6 +162,7 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
             ...(p.filter ? { filter: p.filter } : {}),
             ...(p.repeat ? { repeat: p.repeat } : {}),
             ...(p.seed !== undefined ? { seed: p.seed } : {}),
+            ...(p.retries !== undefined ? { retries: p.retries } : {}),
             skipBuild: !p.compile,
             keepSession: true,
           }),
@@ -198,10 +199,12 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
       });
       return { total: all.length, nextIndex: engine.events.mark(), events: all.slice(-p.limit) };
     },
-    "runtime.command": async (p) => {
-      await engine.command(p.command);
-      return { ok: true };
-    },
+    // Queues behind any test run, so a dashboard click cannot change a run's outcome.
+    "runtime.command": (p) =>
+      engine.exclusive(async () => {
+        await engine.command(p.command);
+        return { ok: true };
+      }),
     "recording.start": async (p) => engine.startRecording({ kind: p.kind, ...(p.name ? { name: p.name } : {}) }),
     "recording.stop": async () => {
       const { recording, path } = await engine.stopRecording();
@@ -388,7 +391,11 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
   const infoPath = daemonInfoPath(engine.root);
   if (options.writeInfoFile !== false) {
     await mkdir(dirname(infoPath), { recursive: true });
-    await writeFile(infoPath, JSON.stringify(info, null, 2), { mode: 0o600 });
+    // `mode` only applies when the file is created; an existing file keeps
+    // its permissions, so tighten them explicitly before writing the token.
+    await writeFile(infoPath, "", { mode: 0o600 });
+    await chmod(infoPath, 0o600);
+    await writeFile(infoPath, JSON.stringify(info, null, 2));
   }
 
   let closed = false;
@@ -407,7 +414,11 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
       const done = new Promise<void>((r) => server.close(() => r()));
       server.closeAllConnections();
       await done;
-      if (options.writeInfoFile !== false) await rm(infoPath, { force: true });
+      if (options.writeInfoFile !== false) {
+        // Another daemon may have taken over the file since; only remove ours.
+        const current = await readFile(infoPath, "utf8").then((t) => JSON.parse(t) as DaemonInfo, () => undefined);
+        if (current?.token === token && current.pid === process.pid && current.port === port) await rm(infoPath, { force: true });
+      }
     },
   };
 }

@@ -52,7 +52,7 @@ export async function buildContext(loaded: LoadedConfig): Promise<ProjectContext
   const verse = await Promise.all(
     project.verseFiles.map(async (file) => scanVerse(file, await readFile(resolve(root, file), "utf8"))),
   );
-  const { tests, errors } = await loadTests(await findTestFiles(resolve(root, config.paths.tests)));
+  const { tests, errors } = await loadTests(await findTestFiles(resolve(root, config.paths.tests)), { root });
   const [lastRun] = await listRunSummaries(resolve(root, config.paths.results), 1);
   return {
     root,

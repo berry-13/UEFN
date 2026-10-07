@@ -171,3 +171,55 @@ test("doctor over RPC", async () => {
     await engine.close();
   }
 });
+
+test("info file: tightened if it already existed, left alone if another daemon took it over", async () => {
+  const { chmod: chmodFile, mkdir: mk, writeFile: write } = await import("node:fs/promises");
+  const dir = await mkdtemp(join(tmpdir(), "uefn-daemon-"));
+  await writeFile(join(dir, "uefn-devtools.config.yaml"), "simulated:\n  boot_ms: 10\n");
+  await mk(join(dir, ".devtools"));
+  await write(daemonInfoPath(dir), "{}");
+  await chmodFile(daemonInfoPath(dir), 0o644);
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const daemon = await startDaemon({ engine, port: 0 });
+  assert.equal((await stat(daemonInfoPath(dir))).mode & 0o777, 0o600);
+  // A newer daemon for the same project overwrote the file.
+  const newer = { ...daemon.info, pid: daemon.info.pid + 1, token: "newer-daemon-token-xxxxxxxxxxxx" };
+  await write(daemonInfoPath(dir), JSON.stringify(newer));
+  await daemon.close();
+  await engine.close();
+  assert.equal(JSON.parse(await readFile(daemonInfoPath(dir), "utf8")).token, newer.token);
+});
+
+test("discovery ignores a daemon that serves a different project", async () => {
+  const { engine, daemon, dir: other } = await setup();
+  try {
+    const { mkdir: mk, writeFile: write } = await import("node:fs/promises");
+    const mine = await mkdtemp(join(tmpdir(), "uefn-daemon-"));
+    await mk(join(mine, ".devtools"));
+    await write(daemonInfoPath(mine), JSON.stringify(daemon.info)); // stale file pointing at the other daemon
+    assert.equal(await DaemonClient.discover(mine), undefined);
+    assert.ok(await DaemonClient.discover(other));
+  } finally {
+    await daemon.close();
+    await engine.close();
+  }
+});
+
+test("runtime commands queue behind a run holding the session", async () => {
+  const { engine, daemon, client } = await setup();
+  try {
+    await client.call("session.start", {});
+    let release!: () => void;
+    const held = engine.exclusive(() => new Promise<void>((r) => (release = r)));
+    const sent = client.call("runtime.command", { command: { type: "start_game" } });
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(engine.state.phase, "idle", "command ran while the session was held");
+    release();
+    await held;
+    await sent;
+    await engine.waitForEvent({ type: "game.started" }, { timeoutMs: 5000, fromIndex: 0 });
+  } finally {
+    await daemon.close();
+    await engine.close();
+  }
+});

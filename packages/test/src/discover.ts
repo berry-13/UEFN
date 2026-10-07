@@ -1,36 +1,87 @@
-import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
+import { realpath, stat } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { TEST_FILE, walk } from "@uefn-devtools/core";
 import { globalState, type TestDefinition } from "./context.ts";
 
-// Node caches ES modules, so importing a test file twice registers nothing
-// the second time. Long-lived processes (daemon, MCP server) keep the
-// definitions per file and re-import, with a cache-busting query, only when
-// the file has changed.
-const KEY = Symbol.for("uefn-devtools.test.module-cache");
-const g = globalThis as unknown as Record<symbol, Map<string, { mtimeMs: number; tests: TestDefinition[] }> | undefined>;
-const moduleCache = (g[KEY] ??= new Map());
+// Node caches ES modules: importing a test file twice registers nothing the
+// second time, and an edited helper would never reload. Long-lived processes
+// (daemon, MCP server) therefore version the project's module graph: a
+// resolve hook (reload-hook.ts) appends a generation to every project-local
+// module URL, and the generation is bumped whenever any script in the
+// project changes. Definitions are cached per file for the current
+// generation. Imports are serialised because test registration goes through
+// one shared registry.
+interface ModuleState {
+  cache: Map<string, TestDefinition[]>;
+  fingerprint?: string;
+  generation?: Int32Array;
+  hookInstalled: boolean;
+  lock: Promise<unknown>;
+}
+const KEY = Symbol.for("uefn-devtools.test.module-state");
+const g = globalThis as unknown as Record<symbol, ModuleState | undefined>;
+const state: ModuleState = (g[KEY] ??= { cache: new Map(), hookInstalled: false, lock: Promise.resolve() });
 
-async function importTestModule(file: string): Promise<TestDefinition[]> {
-  const { mtimeMs } = await stat(file);
-  const cached = moduleCache.get(file);
-  if (cached && cached.mtimeMs === mtimeMs) return cached.tests;
-  const before = globalState.registry.length;
-  globalState.loadingFile = file;
-  try {
-    const url = pathToFileURL(file);
-    if (cached) url.searchParams.set("v", String(mtimeMs));
-    await import(url.href);
-  } catch (error) {
-    globalState.registry.splice(before);
-    throw error;
-  } finally {
-    globalState.loadingFile = undefined;
-  }
-  const tests = globalState.registry.splice(before);
-  moduleCache.set(file, { mtimeMs, tests });
-  return tests;
+function serialised<T>(fn: () => Promise<T>): Promise<T> {
+  const next = state.lock.then(fn, fn);
+  state.lock = next.catch(() => {});
+  return next;
+}
+
+async function installHook(): Promise<void> {
+  if (state.hookInstalled) return;
+  state.hookInstalled = true;
+  const { register } = await import("node:module");
+  if (typeof register !== "function") return; // e.g. other runtimes: entry-only cache busting below
+  const buffer = new SharedArrayBuffer(4);
+  state.generation = new Int32Array(buffer);
+  // DevTools' own packages (the monorepo's packages/ dir, or the installed
+  // scope) must keep a single instance.
+  const packagesDir = await realpath(fileURLToPath(new URL("../../", import.meta.url)));
+  register(new URL("./reload-hook.js", import.meta.url), {
+    data: { generation: buffer, exclude: [pathToFileURL(packagesDir).href + "/"] },
+  });
+}
+
+const SCRIPT = /\.(ts|mts|cts|js|mjs|cjs)$/;
+
+/** Changes whenever a script anywhere in the project is added, removed or edited. */
+async function fingerprint(root: string): Promise<string> {
+  const files = await walk(root, (name) => SCRIPT.test(name));
+  const parts = await Promise.all(files.map(async (f) => `${f}:${(await stat(f).catch(() => ({ mtimeMs: 0 }))).mtimeMs}`));
+  return createHash("sha1").update(parts.sort().join("\n")).digest("hex");
+}
+
+async function importTestModule(file: string, root: string): Promise<TestDefinition[]> {
+  return serialised(async () => {
+    await installHook();
+    const print = await fingerprint(root);
+    if (print !== state.fingerprint) {
+      if (state.fingerprint !== undefined && state.generation) Atomics.add(state.generation, 0, 1);
+      state.fingerprint = print;
+      state.cache.clear();
+    }
+    const cached = state.cache.get(file);
+    if (cached) return cached;
+    const before = globalState.registry.length;
+    globalState.loadingFile = file;
+    try {
+      const url = pathToFileURL(file);
+      // Without the hook, at least bust the entry module (helpers stay cached).
+      if (!state.generation) url.searchParams.set("v", print);
+      await import(url.href);
+    } catch (error) {
+      globalState.registry.splice(before);
+      throw error;
+    } finally {
+      globalState.loadingFile = undefined;
+    }
+    const tests = globalState.registry.splice(before);
+    state.cache.set(file, tests);
+    return tests;
+  });
 }
 import { loadYamlTests } from "./yaml.ts";
 
@@ -43,8 +94,28 @@ export async function findTestFiles(testsDir: string): Promise<string[]> {
   return walk(resolve(testsDir), (name) => TEST_FILE.test(name));
 }
 
+export interface LoadOptions {
+  /**
+   * Project root: an edit to any script under it reloads the test modules.
+   * Defaults to the common directory of the test files.
+   */
+  root?: string;
+}
+
+function commonDir(files: readonly string[]): string {
+  if (files.length === 0) return process.cwd();
+  let dir = dirname(resolve(files[0]!));
+  while (!files.every((f) => resolve(f).startsWith(dir + "/") || resolve(f).startsWith(dir + "\\"))) {
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return dir;
+}
+
 /** Loads TypeScript tests through Node's type stripping and YAML tests through the schema. */
-export async function loadTests(files: readonly string[]): Promise<DiscoveryResult> {
+export async function loadTests(files: readonly string[], options: LoadOptions = {}): Promise<DiscoveryResult> {
+  const root = resolve(options.root ?? commonDir(files));
   const tests: TestDefinition[] = [];
   const errors: DiscoveryResult["errors"] = [];
   for (const file of files) {
@@ -52,7 +123,7 @@ export async function loadTests(files: readonly string[]): Promise<DiscoveryResu
       if (/\.ya?ml$/.test(file)) {
         tests.push(...(await loadYamlTests(file)));
       } else {
-        tests.push(...(await importTestModule(file)));
+        tests.push(...(await importTestModule(file, root)));
       }
     } catch (error) {
       errors.push({ file, message: (error as Error).message });

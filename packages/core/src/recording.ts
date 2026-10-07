@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Recording, type Anomaly, type RecordingKind, type RecordingSummary, type RuntimeEvent } from "@uefn-devtools/protocol";
@@ -12,7 +13,7 @@ export function recordingsDir(root: string): string {
 }
 
 export function newRecordingId(): string {
-  return `rec_${Date.now().toString(36)}${Math.floor(Math.random() * 36 * 36).toString(36).padStart(2, "0")}`;
+  return `rec_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
 }
 
 function entityKey(e: RuntimeEvent): string {

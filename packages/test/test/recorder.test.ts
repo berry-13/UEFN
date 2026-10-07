@@ -139,3 +139,42 @@ test("damage that kills implies the elimination; damage that doesn't, doesn't", 
     { damage: { player: "b", amount: 100 } },
   ]);
 });
+
+test("runtime text in notes cannot escape comments; bindings avoid reserved words; ids stay unique", async (t) => {
+  const { engine, dir } = await project(1);
+  t.after(() => engine.close());
+  engine.startRecording({ name: "Injected", kind: "bug" });
+  await engine.command({ type: "start_game" });
+  await engine.command({ type: "spawn_player", player: "class", team: 1 });
+  await engine.command({ type: "teleport", player: "class", location: "A" });
+  await engine.waitForEvent({ type: "capture.completed" }, { timeoutMs: 10_000 });
+  await engine.sleep(100);
+  const { recording } = await engine.stopRecording();
+  // A runtime log line carrying a payload, as the log transport would deliver it.
+  recording.events.push({
+    id: "log_x", timestamp: recording.events.at(-1)!.timestamp + 1, type: "log",
+    source: { type: "system", id: "LogVerse" },
+    payload: { level: "error", message: "boom\nglobalThis.pwned = true;\u2028globalThis.pwned2 = true;" },
+  });
+  const generated = generateTest(recording);
+  const ts = toTypeScript(generated, { recordingId: recording.id });
+  for (const line of ts.split(/\r?\n|\u2028|\u2029/)) {
+    if (line.includes("pwned")) assert.match(line, /^\/\/ /, `escaped comment: ${line}`);
+  }
+  assert.match(ts, /const class_ = game\.player\("class"/);
+  const yaml = toYaml(generated, { recordingId: recording.id });
+  for (const line of yaml.split(/\r?\n/)) if (line.includes("pwned")) assert.match(line, /^# /);
+
+  const { writeGeneratedTest } = await import("@uefn-devtools/test");
+  const testsDir = join(dir, "Tests");
+  const a = await writeGeneratedTest(testsDir, generated, "yaml");
+  const b = await writeGeneratedTest(testsDir, generated, "ts");
+  const c = await writeGeneratedTest(testsDir, generated, "yaml");
+  assert.match(a, /injected\.recorded\.test\.yaml$/);
+  assert.match(b, /injected-2\.recorded\.test\.ts$/);
+  assert.match(c, /injected-3\.recorded\.test\.yaml$/);
+  const { loadTests, findTestFiles } = await import("@uefn-devtools/test");
+  const loaded = await loadTests(await findTestFiles(testsDir), { root: dir });
+  assert.deepEqual(loaded.errors, []);
+  assert.deepEqual(loaded.tests.map((x) => x.id).sort(), ["injected", "injected-2", "injected-3"]);
+});

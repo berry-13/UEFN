@@ -308,6 +308,7 @@ async function testViaDaemon(values: Values, positionals: string[]): Promise<num
   if (!client) throw new UsageError("no daemon is running for this project (start one with 'uefn daemon')");
   const repeat = int(values.repeat, "repeat");
   const seed = int(values.seed, "seed");
+  const retries = int(values.retries, "retries");
   const reporter = values.json ? undefined : consoleReporter({ verbose: values.verbose === true });
   const abort = new AbortController();
   const stream = client.stream(abort.signal);
@@ -318,6 +319,7 @@ async function testViaDaemon(values: Values, positionals: string[]): Promise<num
     ...(positionals[0] ? { filter: positionals[0] } : {}),
     ...(repeat !== undefined ? { repeat } : {}),
     ...(seed !== undefined ? { seed } : {}),
+    ...(retries !== undefined ? { retries } : {}),
     compile: values["no-compile"] !== true,
   })) as { runId: string };
   for await (const message of stream) {
@@ -365,8 +367,8 @@ function formatOf(values: Values): "yaml" | "ts" {
   return f;
 }
 
-/** Resolves on Ctrl+C or after --duration, whichever comes first. */
-function untilStopped(values: Values): Promise<void> {
+/** Resolves on Ctrl+C or after `durationMs`, whichever comes first. */
+function untilStopped(durationMs: number | undefined): Promise<void> {
   return new Promise((resolveStop) => {
     const done = () => {
       process.off("SIGINT", done);
@@ -374,13 +376,21 @@ function untilStopped(values: Values): Promise<void> {
       resolveStop();
     };
     process.on("SIGINT", done);
-    const timer = values.duration ? setTimeout(done, parseDuration(values.duration)) : undefined;
+    const timer = durationMs !== undefined ? setTimeout(done, durationMs) : undefined;
   });
 }
 
 async function cmdRecord(values: Values): Promise<number> {
   const format = formatOf(values);
   const kind = values.bug ? "bug" : "scenario";
+  // Validate everything before a recording exists, so a bad flag cannot
+  // leave one running in the daemon.
+  let durationMs: number | undefined;
+  try {
+    durationMs = values.duration !== undefined ? parseDuration(values.duration) : undefined;
+  } catch {
+    throw new UsageError(`--duration: invalid duration '${values.duration}' (e.g. 30s, 500ms, 2m)`);
+  }
   const { root } = await loadConfig(process.cwd(), values.config);
   const { DaemonClient } = await import("@uefn-devtools/daemon");
   const client = values.adapter ? undefined : await DaemonClient.discover(root);
@@ -395,8 +405,12 @@ async function cmdRecord(values: Values): Promise<number> {
     if (!state.session || state.session.status === "stopped") await client.call("session.start", {});
     const started = await client.call("recording.start", { kind, ...(values.name ? { name: values.name } : {}) });
     banner(`the daemon (${client.info.url}); its dashboard shows it live`);
-    await untilStopped(values);
-    const stopped = await client.call("recording.stop", {});
+    let stopped;
+    try {
+      await untilStopped(durationMs);
+    } finally {
+      stopped = await client.call("recording.stop", {});
+    }
     summary = stopped.summary;
     if (kind === "scenario") {
       try {
@@ -417,7 +431,7 @@ async function cmdRecord(values: Values): Promise<number> {
       if (engine.adapter.name === "simulated") {
         console.log("  (Nobody plays a private simulated session. Run 'uefn daemon' and use the dashboard's simulator controls.)");
       }
-      await untilStopped(values);
+      await untilStopped(durationMs);
       const { recording } = await engine.stopRecording();
       summary = summarizeRecording(recording);
       if (kind === "scenario") {

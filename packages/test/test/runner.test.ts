@@ -145,3 +145,62 @@ test("typescript tests reload in a long-lived process", async () => {
   await engine.close();
   assert.equal(third.status, "failed", "edited test must be re-imported");
 });
+
+async function linkedProject(files: Record<string, string>) {
+  const dir = await project(CONFIG(), files);
+  await mkdir(join(dir, "node_modules", "@uefn-devtools"), { recursive: true });
+  const { symlink } = await import("node:fs/promises");
+  await symlink(new URL("..", import.meta.url).pathname, join(dir, "node_modules", "@uefn-devtools", "test"));
+  return dir;
+}
+
+async function touch(file: string, body: string) {
+  const { utimes } = await import("node:fs/promises");
+  await writeFile(file, body);
+  const later = new Date(Date.now() + Math.floor(Math.random() * 1e6) + 10_000);
+  await utimes(file, later, later);
+}
+
+const USES_HELPER = `
+  import { expect, test } from "@uefn-devtools/test";
+  import { REWARD } from "./helper.ts";
+  test("uses helper", async ({ game }) => {
+    await game.start();
+    await game.player("p1", { team: 1 }).enter("A");
+    await expect(game.team(1)).toHaveScore(REWARD, { timeout: "3s" });
+  });
+`;
+
+test("editing a helper module reloads the tests that import it", async () => {
+  const dir = await linkedProject({ "h.test.ts": USES_HELPER, "helper.ts": "export const REWARD = 50;\n" });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  try {
+    assert.equal((await runTests(engine, { keepSession: true })).status, "passed");
+    await touch(join(dir, "Tests", "helper.ts"), "export const REWARD = 75;\n");
+    const after = await runTests(engine, { keepSession: true, skipBuild: true });
+    assert.equal(after.status, "failed", "stale helper would still pass");
+    assert.equal(after.tests[0]!.attempts[0]!.assertions.find((a) => !a.passed)?.expected, 75);
+  } finally {
+    await engine.close();
+  }
+});
+
+test("a test file that failed to import loads once it is fixed", async () => {
+  const { loadTests, findTestFiles } = await import("@uefn-devtools/test");
+  const dir = await linkedProject({ "b.test.ts": "this is not valid ( typescript" });
+  const files = await findTestFiles(join(dir, "Tests"));
+  const broken = await loadTests(files, { root: dir });
+  assert.equal(broken.errors.length, 1);
+  await touch(join(dir, "Tests", "b.test.ts"), USES_HELPER.replace(`import { REWARD } from "./helper.ts";`, "const REWARD = 50;"));
+  const fixed = await loadTests(files, { root: dir });
+  assert.deepEqual(fixed.errors, []);
+  assert.equal(fixed.tests.length, 1);
+});
+
+test("concurrent discovery of the same files returns the same tests", async () => {
+  const { loadTests, findTestFiles } = await import("@uefn-devtools/test");
+  const dir = await linkedProject({ "h.test.ts": USES_HELPER, "helper.ts": "export const REWARD = 50;\n", "two.test.ts": USES_HELPER.replace('"uses helper"', '"second"') });
+  const files = await findTestFiles(join(dir, "Tests"));
+  const results = await Promise.all([1, 2, 3, 4].map(() => loadTests(files, { root: dir })));
+  for (const r of results) assert.deepEqual(r.tests.map((t) => t.id).sort(), ["second", "uses-helper"]);
+});

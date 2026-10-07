@@ -19,6 +19,7 @@ export const RpcParams = {
       filter: z.string().optional(),
       repeat: z.number().int().positive().max(1000).optional(),
       seed: z.number().int().optional(),
+      retries: z.number().int().nonnegative().max(10).optional(),
       compile: z.boolean().default(true),
     })
     .default({ compile: true }),
