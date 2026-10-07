@@ -14,6 +14,7 @@
     "@uefn-devtools/protocol": "workspace:*",
     "@uefn-devtools/test": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.0",
-    "@uefn-devtools/daemon": "workspace:*"
+    "@uefn-devtools/daemon": "workspace:*",
+    "@uefn-devtools/doctor": "workspace:*"
   }
 }

@@ -6,7 +6,8 @@ import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { formatCausalTree, listRecordings, loadRecording, summarizeRecording, type DevToolsEngine } from "@uefn-devtools/core";
+import { findRunSummary, formatCausalTree, listRecordings, listRunSummaries, loadRecording, summarizeRecording, type DevToolsEngine } from "@uefn-devtools/core";
+import { runDoctor } from "@uefn-devtools/doctor";
 import { createDevToolsMcpServer } from "@uefn-devtools/mcp";
 import {
   RpcErrorCode,
@@ -29,7 +30,6 @@ import {
   toYaml,
   writeGeneratedTest,
 } from "@uefn-devtools/test";
-import { findRunSummary, listRunSummaries } from "./runs.ts";
 
 export const DEFAULT_PORT = 4917;
 const VERSION = "0.1.0";
@@ -170,6 +170,7 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
         .finally(() => running.delete(runId));
       return { runId };
     },
+    "doctor.run": () => runDoctor(engine.loaded),
     "runs.list": async (p) => ({
       running: [...running.values()],
       runs: (await listRunSummaries(resultsDir, p.limit)).map((s) => ({

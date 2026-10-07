@@ -22,6 +22,7 @@ export const RpcParams = {
       compile: z.boolean().default(true),
     })
     .default({ compile: true }),
+  "doctor.run": z.object({}).default({}),
   "runs.list": z.object({ limit: z.number().int().positive().max(200).default(20) }).default({ limit: 20 }),
   "runs.get": z.object({ runId: z.string() }),
   "events.query": z

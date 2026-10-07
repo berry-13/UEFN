@@ -96,7 +96,7 @@ attempt's trace), `state.json`, `compile.json` and `session.json`.
 
 | Tool | Scope |
 |---|---|
-| `uefn_get_project`, `uefn_get_capabilities`, `uefn_get_session_state`, `uefn_get_compile_errors` | read_project |
+| `uefn_get_project`, `uefn_get_capabilities`, `uefn_get_session_state`, `uefn_get_compile_errors`, `uefn_get_project_health` | read_project |
 | `uefn_get_players`, `uefn_get_player`, `uefn_get_devices`, `uefn_get_device` | read_project |
 | `uefn_get_events`, `uefn_trace_event`, `uefn_wait_for_event`, `uefn_list_tests` | read_project |
 | `uefn_compile_verse` | compile |
@@ -142,6 +142,7 @@ RPC methods (schemas in `packages/protocol/src/rpc.ts`):
 | `compile`, `session.start`, `session.stop` | as the CLI |
 | `tests.list` | tests and load errors |
 | `tests.run {filter?, repeat?, seed?, compile?}` | `{runId}` returned immediately; follow progress on `/stream` |
+| `doctor.run` | Project Doctor report: scores, counts, findings |
 | `runs.list {limit}`, `runs.get {runId}` | history from `.devtools/results` |
 | `events.query {type?, fromIndex?, limit}`, `events.trace {eventId}` | event log and causal trees |
 | `runtime.command {command}` | send a `RuntimeCommand` (simulator playground; transports that cannot drive the game refuse) |

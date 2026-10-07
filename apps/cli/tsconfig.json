@@ -3,6 +3,7 @@
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src"],
   "references": [
+    { "path": "../../packages/doctor" },
     { "path": "../../packages/protocol" },
     { "path": "../../packages/core" },
     { "path": "../../packages/test" },

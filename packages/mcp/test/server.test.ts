@@ -110,3 +110,18 @@ test("generating with write=true needs modify_project", async () => {
   assert.match(r.text, /modify_project/);
   await engine.close();
 });
+
+test("project health is available to read-only agents", async () => {
+  const { dir, engine, call } = await connect("read_only");
+  await mkdir(join(dir, "Verse"), { recursive: true });
+  await writeFile(
+    join(dir, "Verse", "m.verse"),
+    "m := class(creative_device):\n    OnBegin<override>()<suspends>:void =\n        loop:\n            Compute()\n    Compute():void = {}\n",
+  );
+  const health = await call("uefn_get_project_health", { min_severity: "warning" });
+  assert.equal(health.isError, false, health.text);
+  const found = health.json.findings as { ruleId: string; line?: number }[];
+  assert.deepEqual(found.map((f) => f.ruleId).sort(), ["UEFN-T401", "UEFN-V102"]);
+  assert.equal(found.find((f) => f.ruleId === "UEFN-V102")?.line, 3);
+  await engine.close();
+});

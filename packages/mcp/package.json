@@ -10,6 +10,16 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
-  "dependencies": {"@uefn-devtools/protocol": "workspace:*", "@uefn-devtools/core": "workspace:*", "@uefn-devtools/test": "workspace:*", "@modelcontextprotocol/sdk": "^1.32.0", "zod": "^4.3.6", "yaml": "^2.8.1"}
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@uefn-devtools/protocol": "workspace:*",
+    "@uefn-devtools/core": "workspace:*",
+    "@uefn-devtools/test": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.3.6",
+    "yaml": "^2.8.1",
+    "@uefn-devtools/doctor": "workspace:*"
+  }
 }

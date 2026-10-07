@@ -34,6 +34,7 @@
 | `@uefn-devtools/core` | `DevToolsEngine`: config, project discovery, git capture, event store, state reducer, waits, recordings and anomaly rules, audit log. |
 | `@uefn-devtools/test` | Playwright-style test API, YAML tests, runner state machine, reporter, failure correlation, artifacts, test generation from recordings. |
 | `@uefn-devtools/mcp` | MCP tools over the engine, with permission scopes and an audit trail. |
+| `@uefn-devtools/doctor` | Project Doctor: structural Verse scanner, rule engine (spec `Rule` interface), category scores. |
 | `@uefn-devtools/daemon` | Shared engine over HTTP on 127.0.0.1: JSON-RPC, server-sent events, MCP (Streamable HTTP) and the dashboard. |
 | `@uefn-devtools/cli` | `uefn` command. |
 
@@ -75,6 +76,6 @@
 ## Not built yet
 
 These spec features are not implemented: Tauri desktop shell, VS Code extension,
-SQLite persistence (artifacts are JSON/JSONL), doctor,
+SQLite persistence (artifacts are JSON/JSONL),
 dependency graph, profiler, snapshots, GitHub integration, `--headed` and
 `--debug`.

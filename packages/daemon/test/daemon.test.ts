@@ -159,3 +159,15 @@ test("record via RPC with simulator commands, then generate and run the test", a
     await engine.close();
   }
 });
+
+test("doctor over RPC", async () => {
+  const { engine, daemon, client } = await setup();
+  try {
+    const report = await client.call("doctor.run", {});
+    assert.equal(report.scores.find((s: { category: string }) => s.category === "tests").score, 100);
+    assert.equal(report.failed, false);
+  } finally {
+    await daemon.close();
+    await engine.close();
+  }
+});

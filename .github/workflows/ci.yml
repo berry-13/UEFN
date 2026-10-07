@@ -19,3 +19,5 @@ jobs:
       - run: pnpm test
       - name: Example project (simulated adapter)
         run: cd examples/capture-point && node ../../apps/cli/dist/main.js test
+      - name: Example project health
+        run: cd examples/capture-point && node ../../apps/cli/dist/main.js doctor --fail-on warning

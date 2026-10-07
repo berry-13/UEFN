@@ -26,6 +26,9 @@ importers:
       '@uefn-devtools/daemon':
         specifier: workspace:*
         version: link:../../packages/daemon
+      '@uefn-devtools/doctor':
+        specifier: workspace:*
+        version: link:../../packages/doctor
       '@uefn-devtools/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
@@ -65,6 +68,9 @@ importers:
       '@uefn-devtools/core':
         specifier: workspace:*
         version: link:../core
+      '@uefn-devtools/doctor':
+        specifier: workspace:*
+        version: link:../doctor
       '@uefn-devtools/mcp':
         specifier: workspace:*
         version: link:../mcp
@@ -78,6 +84,18 @@ importers:
         specifier: ^4.3.6
         version: 4.6.5
 
+  packages/doctor:
+    dependencies:
+      '@uefn-devtools/core':
+        specifier: workspace:*
+        version: link:../core
+      '@uefn-devtools/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@uefn-devtools/test':
+        specifier: workspace:*
+        version: link:../test
+
   packages/mcp:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -86,6 +104,9 @@ importers:
       '@uefn-devtools/core':
         specifier: workspace:*
         version: link:../core
+      '@uefn-devtools/doctor':
+        specifier: workspace:*
+        version: link:../doctor
       '@uefn-devtools/protocol':
         specifier: workspace:*
         version: link:../protocol

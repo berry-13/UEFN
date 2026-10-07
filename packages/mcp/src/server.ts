@@ -17,6 +17,7 @@ import {
 } from "@uefn-devtools/test";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { runDoctor } from "@uefn-devtools/doctor";
 import { resolvePermissions, type Permission, type PermissionSet } from "./permissions.ts";
 
 export interface DevToolsMcpOptions {
@@ -103,6 +104,20 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
     "uefn_get_project",
     { description: "Project name, root, Verse files and test files discovered by DevTools." },
     guarded("uefn_get_project", "read_project", async () => ok(await engine.project())),
+  );
+
+  server.registerTool(
+    "uefn_get_project_health",
+    {
+      description:
+        "Project Doctor: static Verse analysis (subscriptions, loops, unused state, performance) plus test and DevTools setup checks. Returns category scores and findings with file:line. Findings marked heuristic are structural guesses; read the code before acting.",
+      inputSchema: { min_severity: z.enum(["error", "warning", "info"]).default("info") },
+    },
+    guarded("uefn_get_project_health", "read_project", async ({ min_severity }: { min_severity: "error" | "warning" | "info" }) => {
+      const report = await runDoctor(engine.loaded);
+      const rank = { error: 3, warning: 2, info: 1 } as const;
+      return ok({ ...report, findings: report.findings.filter((f) => rank[f.severity] >= rank[min_severity]), rules: undefined });
+    }),
   );
 
   server.registerTool(

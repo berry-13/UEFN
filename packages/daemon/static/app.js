@@ -63,6 +63,9 @@ const store = {
   genCounts: false,
   /** Simulator control values survive re-renders. */
   pg: { pid: "", team: 1, who: "", where: "", by: "(nobody)", dmg: 30 },
+  doctor: null,
+  doctorLoading: false,
+  doctorMin: "info",
 };
 
 /** Live updates must not steal focus from a field the user is editing. */
@@ -575,7 +578,53 @@ function viewRecord() {
       detail));
 }
 
-const VIEWS = { overview: viewOverview, record: viewRecord, tests: viewTests, runs: viewRuns, events: viewEvents, runtime: viewRuntime };
+async function loadDoctor() {
+  store.doctorLoading = true;
+  if (store.view === "doctor") render();
+  try { store.doctor = await rpc("doctor.run"); } catch (e) { store.doctor = { error: e.message }; }
+  store.doctorLoading = false;
+  if (store.view === "doctor") render();
+}
+
+function viewDoctor() {
+  const d = store.doctor;
+  if (!d && !store.doctorLoading) loadDoctor();
+  const head = h("div", { class: "row" },
+    h("button", { onclick: loadDoctor, disabled: store.doctorLoading }, store.doctorLoading ? "Analysing…" : "Re-run"),
+    h("label", { class: "muted" }, "show ",
+      h("select", { "aria-label": "minimum severity", onchange: (e) => { store.doctorMin = e.target.value; render(); } },
+        ["info", "warning", "error"].map((v) => h("option", { value: v, selected: v === store.doctorMin }, v === "info" ? "everything" : `${v}s and worse`)))));
+  if (!d) return h("div", {}, h("h1", {}, "Doctor"), head, h("div", { class: "empty" }, "Analysing project…"));
+  if (d.error) return h("div", {}, h("h1", {}, "Doctor"), head, h("div", { class: "fail" }, d.error));
+  const rank = { error: 3, warning: 2, info: 1 };
+  const shown = d.findings.filter((f) => rank[f.severity] >= rank[store.doctorMin]);
+  const scoreClass = (n) => (n === null ? "muted" : n >= 90 ? "pass" : n >= 70 ? "warn" : "fail");
+  return h("div", {},
+    h("h1", {}, "Doctor"),
+    h("div", { class: "cards" },
+      d.scores.map((s) => h("div", { class: "card", title: s.reason ?? "" },
+        h("div", { class: "label" }, s.label),
+        h("div", { class: `value ${scoreClass(s.score)}` }, s.score === null ? "n/a" : s.score),
+        s.reason ? h("div", { class: "label" }, s.reason) : null))),
+    h("div", { class: "row" },
+      h("span", { class: `badge ${d.counts.error ? "fail" : ""}` }, `${d.counts.error} critical`),
+      h("span", { class: "badge" }, `${d.counts.warning} warnings`),
+      h("span", { class: "badge" }, `${d.counts.info} info`),
+      d.failed ? h("span", { class: "fail" }, `fails at fail_on: ${d.failOn}`) : h("span", { class: "pass" }, `passes fail_on: ${d.failOn}`)),
+    head,
+    shown.length
+      ? h("table", { class: "findings" }, h("thead", {}, h("tr", {}, h("th", {}, "Rule"), h("th", {}, "Severity"), h("th", {}, "Where"), h("th", {}, "Finding"))),
+          h("tbody", {}, shown.map((f) => h("tr", {},
+            h("td", { class: "mono" }, f.ruleId),
+            h("td", {}, h("span", { class: `badge ${f.severity === "error" ? "fail" : ""}` }, f.severity)),
+            h("td", { class: "mono muted" }, f.file ? `${f.file}${f.line ? `:${f.line}` : ""}` : "—"),
+            h("td", {}, h("div", {}, f.message, f.heuristic ? h("span", { class: "muted" }, "  (heuristic)") : null),
+              (f.detail ?? []).map((x) => h("div", { class: "muted mono" }, x)))))))
+      : h("div", { class: "empty" }, "No findings at this level."),
+    h("p", { class: "muted" }, 'Suppress with "# devtools-ignore RULE-ID" on or above the line, or doctor.rules.RULE-ID: off in the config.'));
+}
+
+const VIEWS = { overview: viewOverview, doctor: viewDoctor, record: viewRecord, tests: viewTests, runs: viewRuns, events: viewEvents, runtime: viewRuntime };
 
 function render() {
   const main = $("main");

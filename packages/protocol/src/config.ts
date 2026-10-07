@@ -86,6 +86,15 @@ export const DevToolsConfig = z.object({
       expect_settle: Duration.default("250ms"),
     })
     .default({ timeout: "30s", retries: 0, expect_timeout: "5s", expect_settle: "250ms" }),
+  doctor: z
+    .object({
+      severity: z
+        .object({ fail_on: z.enum(["error", "warning", "info", "never"]).default("error") })
+        .default({ fail_on: "error" }),
+      /** Per-rule override: a severity, or `off`. */
+      rules: z.record(z.string(), z.enum(["error", "warning", "info", "off"])).default({}),
+    })
+    .default({ severity: { fail_on: "error" }, rules: {} }),
   mcp_server: z
     .object({
       mode: z.enum(["read_only", "development", "full_access"]).default("development"),

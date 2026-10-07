@@ -19,6 +19,7 @@ Commands
   compile                Compile Verse through the adapter
   test [filter]          Compile, start/reuse a session, run tests, assert
   trace <event-id>       Causal tree of an event from a recorded events.jsonl
+  doctor                 Project health: static Verse analysis + project checks
   record                 Record a session; generate a test (or a bug report)
   recordings             List saved recordings
   generate-test <rec>    Generate a test from a recording id or file
@@ -42,6 +43,9 @@ test options
 
 trace options
   --file <events.jsonl>  Recorded events (from .devtools/results/...)
+
+doctor options
+  --fail-on <severity>   error | warning | info | never (default: doctor.severity.fail_on)
 
 record / generate-test options
   --name <name>          Recording / test name
@@ -79,6 +83,7 @@ type Values = {
   format?: string;
   counts?: boolean;
   print?: boolean;
+  "fail-on"?: string;
   help?: boolean;
 };
 
@@ -106,6 +111,7 @@ function parse(argv: string[]): { command?: string; positionals: string[]; value
       format: { type: "string" },
       counts: { type: "boolean" },
       print: { type: "boolean" },
+      "fail-on": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -472,6 +478,19 @@ async function cmdGenerateTest(values: Values, positionals: string[]): Promise<n
   return 0;
 }
 
+async function cmdDoctor(values: Values): Promise<number> {
+  const { runRules, buildContext, formatReport } = await import("@uefn-devtools/doctor");
+  const loaded = await loadConfig(process.cwd(), values.config);
+  const failOn = values["fail-on"];
+  if (failOn !== undefined) {
+    if (!["error", "warning", "info", "never"].includes(failOn)) throw new UsageError("--fail-on must be error, warning, info or never");
+    loaded.config.doctor.severity.fail_on = failOn as typeof loaded.config.doctor.severity.fail_on;
+  }
+  const report = runRules(await buildContext(loaded));
+  print(values, report, () => console.log(formatReport(report, { color: process.stdout.isTTY === true && !process.env["NO_COLOR"] })));
+  return report.failed ? 1 : 0;
+}
+
 const STARTER_CONFIG = `# UEFN DevTools configuration
 project:
   name: MyIsland
@@ -502,6 +521,12 @@ runtime:
 tests:
   timeout: 30s
   retries: 0
+
+doctor:
+  severity:
+    fail_on: error
+  # rules:
+  #   UEFN-V103: off
 
 mcp_server:
   mode: development
@@ -539,6 +564,8 @@ async function main(): Promise<number> {
       return cmdMcp(values);
     case "daemon":
       return cmdDaemon(values);
+    case "doctor":
+      return cmdDoctor(values);
     case "record":
       return cmdRecord(values);
     case "recordings":

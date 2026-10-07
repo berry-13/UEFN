@@ -1,5 +1,5 @@
 # Example gameplay device instrumented with the DevTools runtime.
-# Requires runtime/verse/devtools.verse to be copied into the project.
+# Uses the DevTools runtime in devtools.verse (a copy of runtime/verse/devtools.verse).
 #
 # STATUS: UNVERIFIED against UEFN (see docs/capabilities.md). The simulated
 # adapter does not compile Verse; it only discovers these files.
