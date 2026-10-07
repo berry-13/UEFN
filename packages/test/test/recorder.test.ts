@@ -178,3 +178,73 @@ test("runtime text in notes cannot escape comments; bindings avoid reserved word
   assert.deepEqual(loaded.errors, []);
   assert.deepEqual(loaded.tests.map((x) => x.id).sort(), ["injected", "injected-2", "injected-3"]);
 });
+
+test("a mid-game recording reconstructs players who were already playing", async (t) => {
+  const { dir, engine } = await project();
+  t.after(() => engine.close());
+  await engine.command({ type: "start_game" });
+  await engine.command({ type: "spawn_player", player: "bob", team: 2 });
+  await engine.command({ type: "spawn_player", player: "alice", team: 1 });
+  await engine.command({ type: "teleport", player: "alice", location: "A" });
+  await engine.waitForEvent({ type: "player.entered_area", payload: { player: "alice" } }, { timeoutMs: 5000, fromIndex: 0 });
+  engine.startRecording({ name: "Mid game" });
+  await engine.command({ type: "teleport", player: "bob", location: "B" });
+  await engine.waitForEvent({ type: "capture.completed", payload: { device: "B" } }, { timeoutMs: 10_000 });
+  await engine.waitForEvent({ type: "capture.completed", payload: { device: "A" } }, { timeoutMs: 10_000, fromIndex: 0 });
+  await engine.sleep(100);
+  const { recording } = await engine.stopRecording();
+  const generated = generateTest(recording);
+  assert.deepEqual(generated.setup, [
+    "start_game",
+    { spawn_player: { id: "bob", team: 2 } },
+    { spawn_player: { id: "alice", team: 1 } },
+  ]);
+  assert.deepEqual(generated.steps[0], { enter: { player: "alice", area: "A" } });
+  assert.ok(generated.notes.some((n) => /inside areas/.test(n)));
+  await writeFile(join(dir, "Tests", "mid.test.yaml"), toYaml(generated));
+  const summary = await runTests(engine, { skipBuild: true, keepSession: true });
+  assert.equal(summary.status, "passed", JSON.stringify(summary.tests.map((x) => x.attempts[0]?.error)));
+});
+
+test("stop fixes the window at the call, survives a failed save, and ends with the session", async (t) => {
+  const { dir, engine } = await project();
+  t.after(() => engine.close());
+  const { rm, writeFile: write, mkdir: mk } = await import("node:fs/promises");
+  engine.startRecording({ name: "Window" });
+  await engine.command({ type: "start_game" });
+  await engine.sleep(50);
+  // Make the save fail: a file where the recordings directory should be.
+  await mk(join(dir, ".devtools"), { recursive: true });
+  await write(join(dir, ".devtools", "recordings"), "not a directory");
+  const stopping = engine.stopRecording();
+  await engine.command({ type: "spawn_player", player: "late", team: 1 });
+  await assert.rejects(stopping);
+  assert.ok(engine.activeRecording, "a failed save must not lose the recording");
+  await rm(join(dir, ".devtools", "recordings"));
+  const { recording } = await engine.stopRecording();
+  assert.equal(engine.activeRecording, undefined);
+  assert.ok(!recording.events.some((e) => e.type === "player.spawned"), "events after Stop were included");
+
+  engine.startRecording({ name: "Ends with session" });
+  await engine.stopSession();
+  assert.equal(engine.activeRecording, undefined);
+  assert.ok((await listRecordings(dir)).some((r) => r.name === "Ends with session"));
+});
+
+test("concurrent YAML and TS generation get distinct ids", async (t) => {
+  const { dir, engine } = await project();
+  t.after(() => engine.close());
+  engine.startRecording({ name: "Twice" });
+  await engine.command({ type: "start_game" });
+  await engine.command({ type: "spawn_player", player: "p", team: 1 });
+  await engine.command({ type: "teleport", player: "p", location: "A" });
+  await engine.waitForEvent({ type: "capture.completed" }, { timeoutMs: 10_000 });
+  await engine.sleep(50);
+  const { recording } = await engine.stopRecording();
+  const { writeGeneratedTest, loadTests, findTestFiles } = await import("@uefn-devtools/test");
+  const g = generateTest(recording);
+  await Promise.all([writeGeneratedTest(join(dir, "Tests"), g, "yaml"), writeGeneratedTest(join(dir, "Tests"), g, "ts")]);
+  const loaded = await loadTests(await findTestFiles(join(dir, "Tests")), { root: dir });
+  assert.deepEqual(loaded.errors, []);
+  assert.deepEqual(loaded.tests.map((x) => x.id).sort(), ["twice", "twice-2"]);
+});

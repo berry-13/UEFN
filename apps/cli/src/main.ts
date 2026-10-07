@@ -367,15 +367,24 @@ function formatOf(values: Values): "yaml" | "ts" {
   return f;
 }
 
-/** Resolves on Ctrl+C or after `durationMs`, whichever comes first. */
+/** Resolves on Ctrl+C, SIGTERM or after `durationMs`, whichever comes first. */
 function untilStopped(durationMs: number | undefined): Promise<void> {
   return new Promise((resolveStop) => {
     const done = () => {
       process.off("SIGINT", done);
+      process.off("SIGTERM", done);
       clearTimeout(timer);
+      clearInterval(keepAlive);
       resolveStop();
     };
+    // Signal listeners do not keep Node alive; without this, recording via
+    // the daemon (no local work pending) would exit at once and leave the
+    // daemon's recording running.
+    const keepAlive = setInterval(() => {}, 1 << 30);
+    // Both signals end the recording through the normal stop path, so a
+    // daemon is never left with a recording nobody can stop.
     process.on("SIGINT", done);
+    process.on("SIGTERM", done);
     const timer = durationMs !== undefined ? setTimeout(done, durationMs) : undefined;
   });
 }

@@ -1,5 +1,5 @@
 import { detectAnomalies } from "@uefn-devtools/core";
-import type { Recording, RuntimeEvent } from "@uefn-devtools/protocol";
+import type { GameState, Recording, RuntimeEvent } from "@uefn-devtools/protocol";
 import { EventTypes } from "@uefn-devtools/protocol";
 import { stringify } from "yaml";
 import { slugify } from "./names.ts";
@@ -178,7 +178,8 @@ export function generateTest(recording: Recording, options: GenerateOptions = {}
     if (step) actionIdx.push(i);
   }
 
-  if (!events.some((e) => e.type === EventTypes.GameStarted)) {
+  const midGame = !events.some((e) => e.type === EventTypes.GameStarted);
+  if (midGame) {
     steps.push("start_game");
     notes.push("The recording began mid-game. The generated test starts a fresh game, so scores are asserted as gains during the recording.");
   }
@@ -245,6 +246,10 @@ export function generateTest(recording: Recording, options: GenerateOptions = {}
   }
   flushMilestones(events.length, undefined);
 
+  // Mid-game recordings start with the synthetic start_game; the players who
+  // were already playing join right after it.
+  steps.splice(midGame ? 1 : 0, 0, ...preexistingPlayers(recording, steps, notes));
+
   // Leading start/spawn steps read better as setup.
   const setup: YamlStep[] = [];
   while (steps.length && (steps[0] === "start_game" || (typeof steps[0] === "object" && "spawn_player" in steps[0]!))) {
@@ -265,6 +270,57 @@ export function generateTest(recording: Recording, options: GenerateOptions = {}
 
   const name = options.name ?? recording.name;
   return { name, id: slugify(name), setup, steps, assert, notes };
+}
+
+const ACTOR_KEYS = ["enter", "leave", "teleport", "damage", "eliminate"] as const;
+
+/**
+ * Players who act in the recording but spawned before it began. Without a
+ * setup step the replay would spawn them on a default team (or, for `leave`,
+ * not at all), so they are spawned first with their recorded team and put
+ * back into the areas they occupied. Teams come from the state snapshot taken
+ * when recording started, else from any event payload that names them.
+ */
+function preexistingPlayers(recording: Recording, steps: YamlStep[], notes: string[]): YamlStep[] {
+  const spawned = new Set<string>();
+  const actors: string[] = [];
+  for (const step of steps) {
+    if (typeof step !== "object") continue;
+    if ("spawn_player" in step) spawned.add(String(step.spawn_player.id));
+    for (const key of ACTOR_KEYS) {
+      if (!(key in step)) continue;
+      const player = String((step as Record<string, { player: string | number }>)[key]!.player);
+      if (!spawned.has(player) && !actors.includes(player)) actors.push(player);
+    }
+  }
+  const initial = recording.initialState as unknown as GameState | undefined;
+  // Players standing in an area cause effects (captures) without acting.
+  for (const p of Object.values(initial?.players ?? {})) {
+    if (p.alive && p.areas.length && !spawned.has(p.id) && !actors.includes(p.id)) actors.push(p.id);
+  }
+  if (actors.length === 0) return [];
+  const inferredTeam = (player: string): number | undefined => {
+    for (const e of recording.events) {
+      if (playerOf(e) === player && num(e.payload["team"]) !== undefined) return num(e.payload["team"]);
+    }
+    return undefined;
+  };
+  const out: YamlStep[] = [];
+  const reentered: string[] = [];
+  for (const player of actors) {
+    const known = initial?.players?.[player];
+    const team = known?.team ?? inferredTeam(player);
+    out.push({ spawn_player: { id: player, ...(team !== undefined ? { team } : {}) } });
+    if (team === undefined) notes.push(`${player} was already in the game when recording started and their team is unknown; set it in spawn_player.`);
+    for (const area of known?.alive ? known.areas : []) {
+      out.push({ enter: { player, area } });
+      reentered.push(`${player} → ${area}`);
+    }
+  }
+  if (reentered.length) {
+    notes.push(`Players were inside areas when recording started (${reentered.join(", ")}); the replay re-enters them, so progress made before the recording is not reproduced.`);
+  }
+  return out;
 }
 
 function finalAssertions(events: readonly RuntimeEvent[], options: GenerateOptions, notes: string[]): YamlAssertion[] {
@@ -440,7 +496,25 @@ export function toTypeScript(test: GeneratedTest, source?: { recordingId: string
  * `<slug>.recorded.test.<ext>`, never overwriting: a numeric suffix is added
  * when the name is taken.
  */
-export async function writeGeneratedTest(
+// Id allocation reads the suite and then creates a file; two concurrent
+// generations (e.g. YAML and TS in one RPC batch) must not both pick the
+// same id, so allocation is serialised process-wide.
+const WRITE_LOCK = Symbol.for("uefn-devtools.generate.write-lock");
+const gl = globalThis as unknown as Record<symbol, Promise<unknown> | undefined>;
+
+export function writeGeneratedTest(
+  testsDir: string,
+  test: GeneratedTest,
+  format: "yaml" | "ts",
+  source?: { recordingId: string },
+): Promise<string> {
+  const run = () => writeGeneratedTestUnlocked(testsDir, test, format, source);
+  const next = (gl[WRITE_LOCK] ?? Promise.resolve()).then(run, run);
+  gl[WRITE_LOCK] = next.catch(() => {});
+  return next;
+}
+
+async function writeGeneratedTestUnlocked(
   testsDir: string,
   test: GeneratedTest,
   format: "yaml" | "ts",

@@ -7,7 +7,8 @@ const run = promisify(execFile);
 async function git(cwd: string, ...args: string[]): Promise<string | undefined> {
   try {
     const { stdout } = await run("git", args, { cwd, timeout: 5000 });
-    return stdout.trim();
+    // Only trailing whitespace: porcelain lines start with a meaningful space.
+    return stdout.trimEnd();
   } catch {
     return undefined;
   }

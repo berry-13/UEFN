@@ -380,22 +380,39 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
     });
   });
 
-  await new Promise<void>((resolveListen, reject) => {
-    server.once("error", reject);
-    server.listen(options.port ?? DEFAULT_PORT, "127.0.0.1", () => resolveListen());
-  });
-  const port = (server.address() as AddressInfo).port;
-  allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
-
-  const info: DaemonInfo = { pid: process.pid, url: `http://127.0.0.1:${port}`, port, token, startedAt: new Date().toISOString() };
+  // Everything allocated so far (subscriptions, timer, listening socket) is
+  // unwound if startup fails, since the caller gets no handle to close.
+  const unwind = () => {
+    clearInterval(keepAlive);
+    unsubscribeEvents();
+    unsubscribeActivity();
+    if (server.listening) {
+      server.close();
+      server.closeAllConnections();
+    }
+  };
+  let port: number;
+  let info: DaemonInfo;
   const infoPath = daemonInfoPath(engine.root);
-  if (options.writeInfoFile !== false) {
-    await mkdir(dirname(infoPath), { recursive: true });
-    // `mode` only applies when the file is created; an existing file keeps
-    // its permissions, so tighten them explicitly before writing the token.
-    await writeFile(infoPath, "", { mode: 0o600 });
-    await chmod(infoPath, 0o600);
-    await writeFile(infoPath, JSON.stringify(info, null, 2));
+  try {
+    await new Promise<void>((resolveListen, reject) => {
+      server.once("error", reject);
+      server.listen(options.port ?? DEFAULT_PORT, "127.0.0.1", () => resolveListen());
+    });
+    port = (server.address() as AddressInfo).port;
+    allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+    info = { pid: process.pid, url: `http://127.0.0.1:${port}`, port, token, startedAt: new Date().toISOString() };
+    if (options.writeInfoFile !== false) {
+      await mkdir(dirname(infoPath), { recursive: true });
+      // `mode` only applies when the file is created; an existing file keeps
+      // its permissions, so tighten them explicitly before writing the token.
+      await writeFile(infoPath, "", { mode: 0o600 });
+      await chmod(infoPath, 0o600);
+      await writeFile(infoPath, JSON.stringify(info, null, 2));
+    }
+  } catch (error) {
+    unwind();
+    throw error;
   }
 
   let closed = false;

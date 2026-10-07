@@ -1,7 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Recording, type Anomaly, type RecordingKind, type RecordingSummary, type RuntimeEvent } from "@uefn-devtools/protocol";
+import {
+  Recording,
+  type Anomaly,
+  type GameState,
+  type GitInfo,
+  type RecordingKind,
+  type RecordingSummary,
+  type RuntimeEvent,
+} from "@uefn-devtools/protocol";
 
 /** Two same-typed events on the same entity closer than this are suspicious. */
 const RAPID_REPEAT_MS = 50;
@@ -175,4 +183,9 @@ export interface ActiveRecording {
   fromIndex: number;
   sessionStart: number;
   startedAt: number;
+  sessionId: string;
+  git?: GitInfo;
+  initialState: GameState;
+  /** Fixed by the first stop attempt so a retried save covers the same window. */
+  end?: { index: number; durationMs: number };
 }

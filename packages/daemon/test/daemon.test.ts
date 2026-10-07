@@ -223,3 +223,15 @@ test("runtime commands queue behind a run holding the session", async () => {
     await engine.close();
   }
 });
+
+test("a daemon that fails to start releases what it allocated", async () => {
+  const { engine, daemon, dir } = await setup();
+  const listeners = () => (engine.events as unknown as { listeners: Set<unknown> }).listeners.size;
+  const before = listeners();
+  await assert.rejects(startDaemon({ engine, port: daemon.info.port, writeInfoFile: false }), /EADDRINUSE/);
+  assert.equal(listeners(), before, "subscriptions leaked");
+  // The original daemon's info file is untouched by the failed start.
+  assert.equal(JSON.parse(await readFile(daemonInfoPath(dir), "utf8")).token, daemon.info.token);
+  await daemon.close();
+  await engine.close();
+});

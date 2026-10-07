@@ -31,6 +31,13 @@ export const Recording = z.object({
   sessionStart: z.number(),
   durationMs: z.number(),
   git: GitInfo.optional(),
+  /** Session the recording belongs to; a recording never spans sessions. */
+  sessionId: z.string().optional(),
+  /**
+   * Derived GameState when recording started, so a recording that begins
+   * mid-game can reconstruct who was already playing (teams, positions).
+   */
+  initialState: z.record(z.string(), z.unknown()).optional(),
   events: z.array(RuntimeEvent),
 });
 export type Recording = z.infer<typeof Recording>;

@@ -41,3 +41,22 @@ test("event store queries and causal trees", () => {
   assert.match(tree, /score\.changed \(team=1\)/);
   assert.deepEqual(store.countsByType(5), { "device.state_changed": 1, "score.changed": 1 });
 });
+
+test("git info keeps the first changed file's path intact", async () => {
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const { captureGitInfo } = await import("@uefn-devtools/core");
+  const dir = await mkdtemp(join(tmpdir(), "uefn-git-"));
+  const git = (...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
+  git("init", "-q");
+  git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x");
+  await writeFile(join(dir, "apps.txt"), "a");
+  git("add", "apps.txt");
+  git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "y");
+  await writeFile(join(dir, "apps.txt"), "b"); // " M apps.txt": leading space
+  const info = await captureGitInfo(dir);
+  assert.deepEqual(info?.changedFiles, ["apps.txt"]);
+  assert.equal(info?.dirty, true);
+});

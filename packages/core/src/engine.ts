@@ -208,6 +208,10 @@ export class DevToolsEngine {
 
   async stopSession(): Promise<void> {
     if (!this.currentSession) return;
+    // A recording belongs to one session: finalise it before the session ends.
+    // If the save fails, its window is already fixed (see stopRecording), so
+    // a later stopRecording() retries the same events; the session still stops.
+    if (this.recording) await this.stopRecording().catch(() => {});
     await this.adapter.stopSession();
     await this.pump;
     this.pump = undefined;
@@ -278,16 +282,26 @@ export class DevToolsEngine {
       fromIndex: this.events.mark(),
       sessionStart: this.now(),
       startedAt: Date.now(),
+      sessionId: this.currentSession.id,
+      ...(this.currentSession.git ? { git: this.currentSession.git } : {}),
+      initialState: structuredClone(this.liveState),
     };
     this.publishActivity({ source: "recorder", data: { kind: "started", recording: this.recording } });
     return this.recording;
   }
 
-  /** Stops the active recording and saves it under `.devtools/recordings`. */
+  /**
+   * Stops the active recording and saves it under `.devtools/recordings`.
+   * The window ends at the moment of the call (later events are excluded),
+   * and the recording stays active until the save succeeds, so a failed
+   * save can be retried without losing it.
+   */
   async stopRecording(): Promise<{ recording: Recording; path: string }> {
     const active = this.recording;
     if (!active) throw new Error("no recording in progress");
-    this.recording = undefined;
+    // Sample the window synchronously, before any await.
+    active.end ??= { index: this.events.mark(), durationMs: this.now() - active.sessionStart };
+    const end = active.end;
     const project = await this.project();
     const recording: Recording = {
       version: 1,
@@ -298,11 +312,14 @@ export class DevToolsEngine {
       adapter: this.adapter.name,
       startedAt: active.startedAt,
       sessionStart: active.sessionStart,
-      durationMs: this.now() - active.sessionStart,
-      ...(this.currentSession?.git ? { git: this.currentSession.git } : {}),
-      events: [...this.events.all(active.fromIndex)],
+      durationMs: end.durationMs,
+      sessionId: active.sessionId,
+      ...(active.git ? { git: active.git } : {}),
+      initialState: active.initialState as unknown as Record<string, unknown>,
+      events: this.events.all(active.fromIndex).slice(0, end.index - active.fromIndex),
     };
     const path = await saveRecording(this.root, recording);
+    if (this.recording === active) this.recording = undefined;
     this.publishActivity({ source: "recorder", data: { kind: "stopped", id: recording.id, path } });
     return { recording, path };
   }

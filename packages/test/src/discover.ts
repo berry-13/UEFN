@@ -54,34 +54,38 @@ async function fingerprint(root: string): Promise<string> {
   return createHash("sha1").update(parts.sort().join("\n")).digest("hex");
 }
 
-async function importTestModule(file: string, root: string): Promise<TestDefinition[]> {
-  return serialised(async () => {
-    await installHook();
-    const print = await fingerprint(root);
-    if (print !== state.fingerprint) {
-      if (state.fingerprint !== undefined && state.generation) Atomics.add(state.generation, 0, 1);
-      state.fingerprint = print;
-      state.cache.clear();
-    }
-    const cached = state.cache.get(file);
-    if (cached) return cached;
-    const before = globalState.registry.length;
-    globalState.loadingFile = file;
-    try {
-      const url = pathToFileURL(file);
-      // Without the hook, at least bust the entry module (helpers stay cached).
-      if (!state.generation) url.searchParams.set("v", print);
-      await import(url.href);
-    } catch (error) {
-      globalState.registry.splice(before);
-      throw error;
-    } finally {
-      globalState.loadingFile = undefined;
-    }
-    const tests = globalState.registry.splice(before);
-    state.cache.set(file, tests);
-    return tests;
-  });
+/** Bumps the generation when the project changed; once per discovery, not per file. */
+async function refreshGeneration(root: string): Promise<string> {
+  await installHook();
+  const print = await fingerprint(root);
+  if (print !== state.fingerprint) {
+    if (state.fingerprint !== undefined && state.generation) Atomics.add(state.generation, 0, 1);
+    state.fingerprint = print;
+    state.cache.clear();
+  }
+  return print;
+}
+
+/** Caller holds the discovery lock and has refreshed the generation. */
+async function importTestModule(file: string, print: string): Promise<TestDefinition[]> {
+  const cached = state.cache.get(file);
+  if (cached) return cached;
+  const before = globalState.registry.length;
+  globalState.loadingFile = file;
+  try {
+    const url = pathToFileURL(file);
+    // Without the hook, at least bust the entry module (helpers stay cached).
+    if (!state.generation) url.searchParams.set("v", print);
+    await import(url.href);
+  } catch (error) {
+    globalState.registry.splice(before);
+    throw error;
+  } finally {
+    globalState.loadingFile = undefined;
+  }
+  const tests = globalState.registry.splice(before);
+  state.cache.set(file, tests);
+  return tests;
 }
 import { loadYamlTests } from "./yaml.ts";
 
@@ -118,12 +122,26 @@ export async function loadTests(files: readonly string[], options: LoadOptions =
   const root = resolve(options.root ?? commonDir(files));
   const tests: TestDefinition[] = [];
   const errors: DiscoveryResult["errors"] = [];
+  const tsFiles = files.filter((f) => !/\.ya?ml$/.test(f));
+  // One lock and one project fingerprint for the whole discovery.
+  const imported = tsFiles.length
+    ? await serialised(async () => {
+        const print = await refreshGeneration(root);
+        const out = new Map<string, TestDefinition[] | Error>();
+        for (const file of tsFiles) {
+          out.set(file, await importTestModule(file, print).catch((e: Error) => e));
+        }
+        return out;
+      })
+    : new Map<string, TestDefinition[] | Error>();
   for (const file of files) {
     try {
       if (/\.ya?ml$/.test(file)) {
         tests.push(...(await loadYamlTests(file)));
       } else {
-        tests.push(...(await importTestModule(file, root)));
+        const result = imported.get(file)!;
+        if (result instanceof Error) throw result;
+        tests.push(...result);
       }
     } catch (error) {
       errors.push({ file, message: (error as Error).message });
