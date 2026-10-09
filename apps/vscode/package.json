@@ -1,0 +1,190 @@
+{
+  "name": "uefn-devtools-vscode",
+  "displayName": "UEFN DevTools",
+  "description": "Run UEFN DevTools tests from the Test Explorer, see Verse compile diagnostics, and watch live runtime events and game state.",
+  "version": "0.1.0",
+  "publisher": "uefn-devtools",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "uefn",
+    "verse",
+    "fortnite",
+    "testing"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/uefn-devtools.config.yaml",
+    "workspaceContains:**/*.uefnproject",
+    "workspaceContains:**/*.test.yaml",
+    "onLanguage:verse"
+  ],
+  "scripts": {
+    "gen:schema": "node scripts/gen-schema.mjs"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "uefnDevtools.compile",
+        "title": "Compile Verse",
+        "category": "UEFN"
+      },
+      {
+        "command": "uefnDevtools.refreshTests",
+        "title": "Refresh Tests",
+        "category": "UEFN",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "uefnDevtools.startDaemon",
+        "title": "Start Daemon",
+        "category": "UEFN"
+      },
+      {
+        "command": "uefnDevtools.stopDaemon",
+        "title": "Stop Daemon",
+        "category": "UEFN"
+      },
+      {
+        "command": "uefnDevtools.openDashboard",
+        "title": "Open Dashboard",
+        "category": "UEFN"
+      },
+      {
+        "command": "uefnDevtools.refreshState",
+        "title": "Refresh Game State",
+        "category": "UEFN",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "uefnDevtools.clearEvents",
+        "title": "Clear Events",
+        "category": "UEFN",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "uefnDevtools.showOutput",
+        "title": "Show Output",
+        "category": "UEFN"
+      },
+      {
+        "command": "uefnDevtools.statusBarAction",
+        "title": "Start Daemon or Open Dashboard",
+        "category": "UEFN"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "uefnDevtools.clearEvents",
+          "when": "view == uefnDevtools.events",
+          "group": "navigation"
+        },
+        {
+          "command": "uefnDevtools.refreshState",
+          "when": "view == uefnDevtools.state",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "uefnDevtools.statusBarAction",
+          "when": "false"
+        },
+        {
+          "command": "uefnDevtools.stopDaemon",
+          "when": "uefnDevtools.daemonRunning"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "uefnDevtools",
+          "title": "UEFN DevTools",
+          "icon": "media/uefn.svg"
+        }
+      ]
+    },
+    "views": {
+      "uefnDevtools": [
+        {
+          "id": "uefnDevtools.events",
+          "name": "Live Events"
+        },
+        {
+          "id": "uefnDevtools.state",
+          "name": "Game State"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "uefnDevtools.events",
+        "contents": "No UEFN DevTools daemon is running for this project, so there are no live events.\n[Start Daemon](command:uefnDevtools.startDaemon)",
+        "when": "!uefnDevtools.daemonRunning"
+      },
+      {
+        "view": "uefnDevtools.state",
+        "contents": "Game state is read from the UEFN DevTools daemon.\n[Start Daemon](command:uefnDevtools.startDaemon)",
+        "when": "!uefnDevtools.daemonRunning"
+      }
+    ],
+    "configuration": {
+      "title": "UEFN DevTools",
+      "properties": {
+        "uefnDevtools.cliPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `uefn` CLI (or its `main.js`), relative paths resolve against the project root. Empty: use `node_modules/.bin/uefn` from the project or an ancestor, then `uefn` on `PATH`."
+        },
+        "uefnDevtools.adapter": {
+          "type": "string",
+          "enum": [
+            "",
+            "simulated",
+            "mcp"
+          ],
+          "enumDescriptions": [
+            "Use the adapter from uefn-devtools.config.yaml",
+            "Built-in simulator",
+            "Live UEFN through MCP"
+          ],
+          "default": "",
+          "description": "Adapter passed to the CLI with --adapter."
+        },
+        "uefnDevtools.compileOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Compile Verse whenever a .verse file is saved."
+        },
+        "uefnDevtools.projectRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Project directory (holding uefn-devtools.config.yaml), relative to the first workspace folder. Empty: the shallowest folder that contains the config file."
+        }
+      }
+    },
+    "yamlValidation": [
+      {
+        "fileMatch": [
+          "*.test.yaml",
+          "*.test.yml"
+        ],
+        "url": "./schemas/yaml-test.schema.json"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@types/vscode": "1.100.0",
+    "@uefn-devtools/test": "workspace:*",
+    "zod": "^4.3.6"
+  }
+}

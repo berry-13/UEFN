@@ -36,6 +36,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/test
 
+  apps/vscode:
+    devDependencies:
+      '@types/vscode':
+        specifier: 1.100.0
+        version: 1.100.0
+      '@uefn-devtools/test':
+        specifier: workspace:*
+        version: link:../../packages/test
+      zod:
+        specifier: ^4.3.6
+        version: 4.6.5
+
   examples/capture-point:
     dependencies:
       '@uefn-devtools/cli':
@@ -146,6 +158,9 @@ packages:
 
   '@types/node@22.20.5':
     resolution: {integrity: sha512-U2+DNr+wSjpsTS/wZGYHq7GcwfuSmKiKvoPvK22zwTlRhU91yOniN4qRR5KhIjvif7ysw/dz/hKmfDH0Ris4aA==}
+
+  '@types/vscode@1.100.0':
+    resolution: {integrity: sha512-4uNyvzHoraXEeCamR3+fzcBlh7Afs4Ifjs4epINyUX/jvdk0uzLnwiDY35UKDKnkCHP5Nu3dljl2H8lR6s+rQw==}
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -545,6 +560,8 @@ snapshots:
   '@types/node@22.20.5':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/vscode@1.100.0': {}
 
   accepts@2.0.0:
     dependencies:
