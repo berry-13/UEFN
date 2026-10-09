@@ -270,7 +270,10 @@ test("stream reconnect prefers Last-Event-ID over fromIndex", async () => {
     while (!text.includes("event: session")) text += new TextDecoder().decode((await reader.read()).value);
     await reader.cancel();
     const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1]));
-    assert.deepEqual(ids, [last + 1]);
+    // Replay starts right after Last-Event-ID (not at fromIndex=0) and stays in
+    // order; live perf samples may follow, since the session keeps running.
+    assert.equal(ids[0], last + 1);
+    assert.deepEqual(ids, ids.map((_, i) => last + 1 + i));
   } finally {
     await close();
   }

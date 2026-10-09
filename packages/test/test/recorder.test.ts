@@ -79,7 +79,9 @@ test("a recorded capture generates a yaml test that passes", async () => {
 
   const { test: generated, yaml } = generateYamlTest(recording, { name: "Demo capture" });
   assert.deepEqual(generated.setup, ["start_game", { spawn_player: { id: "p1", team: 1 } }]);
-  assert.equal(generated.steps[0] && typeof generated.steps[0] === "object" && "enter" in generated.steps[0], true);
+  // A recorded pause may precede it: at time_scale 100 a few wall ms of load is half a second of game time.
+  const firstAction = generated.steps.find((s) => !(typeof s === "object" && "wait" in s));
+  assert.equal(typeof firstAction === "object" && "enter" in firstAction, true);
   assert.ok(generated.steps.some((s) => typeof s === "object" && "wait_for" in s));
   assert.deepEqual(generated.assert, [
     { device: { id: "A", state: "Captured", owner: 1 } },

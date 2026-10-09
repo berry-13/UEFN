@@ -38,6 +38,8 @@ export interface CapabilityReport {
   capabilities: Capability[];
   /** Raw tool list for MCP-backed adapters, to support the capability investigation. */
   tools?: { name: string; description?: string }[];
+  /** `list_toolsets` output, for servers that reach their tools through `call_tool`. */
+  toolsets?: string;
 }
 
 export interface AdapterSession {

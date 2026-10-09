@@ -417,7 +417,7 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
       add({ id: "mcp.tool_names", title: "Mapped tools exist on server", status: "skip", detail: "could not connect" });
     } else {
       const mapped = Object.entries(mcp.tools).filter((e): e is [string, string] => typeof e[1] === "string");
-      const absent = mapped.filter(([, name]) => !tools.includes(name));
+      const absent = mapped.filter(([, name]) => !adapterHasTool(tools, name));
       add(
         absent.length === 0
           ? { id: "mcp.tool_names", title: "Mapped tools exist on server", status: "pass", detail: mapped.length ? mapped.map(([, n]) => n).join(", ") : "nothing mapped" }
@@ -530,4 +530,9 @@ async function checkDaemon(add: Add, root: string): Promise<void> {
       fix: "delete .devtools/daemon.json (the next daemon start recreates it)",
     });
   }
+}
+
+/** Mirrors McpUefnAdapter.hasTool: a listed tool, or `<toolset>/<tool>` through `call_tool`. */
+function adapterHasTool(tools: string[], mapping: string): boolean {
+  return tools.includes(mapping) || (mapping.includes("/") && tools.includes("call_tool"));
 }

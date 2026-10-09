@@ -42,7 +42,7 @@ export class McpUefnAdapter implements UEFNAdapter {
   private client?: Client;
   private mcpTransport?: Transport;
   private connected = false;
-  private tools: { name: string; description?: string }[] = [];
+  private tools: { name: string; description?: string; inputSchema?: { properties?: Record<string, unknown> } }[] = [];
   private session?: { id: string; transport: RuntimeTransport };
 
   constructor(private readonly options: McpAdapterOptions) {}
@@ -63,7 +63,11 @@ export class McpUefnAdapter implements UEFNAdapter {
     try {
       await client.connect(transport);
       const listed = await client.listTools();
-      this.tools = listed.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}) }));
+      this.tools = listed.tools.map((t) => ({
+        name: t.name,
+        ...(t.description ? { description: t.description } : {}),
+        ...(t.inputSchema ? { inputSchema: t.inputSchema as { properties?: Record<string, unknown> } } : {}),
+      }));
       this.connected = true;
     } catch (error) {
       await this.disconnect().catch(() => {});
@@ -91,7 +95,7 @@ export class McpUefnAdapter implements UEFNAdapter {
   gameCommands(): ("start_game" | "end_game")[] {
     return (["start_game", "end_game"] as const).filter((key) => {
       const name = this.options.mcp.tools[key];
-      return name !== undefined && this.tools.some((t) => t.name === name);
+      return name !== undefined && this.hasTool(name);
     });
   }
 
@@ -101,14 +105,38 @@ export class McpUefnAdapter implements UEFNAdapter {
     return out.isError ? { ok: false, error: out.text || `${key} failed` } : { ok: true };
   }
 
+  /**
+   * True when `mapping` can be called: a tool listed by name, or
+   * `<toolset>/<tool>` on a server in meta-tool mode. UEFN 42.30 lists only
+   * `list_toolsets`, `describe_toolset` and `call_tool` and reaches its
+   * toolsets through `call_tool` (seen in a live editor log).
+   */
+  hasTool(mapping: string): boolean {
+    if (this.tools.some((t) => t.name === mapping)) return true;
+    return mapping.includes("/") && this.tools.some((t) => t.name === "call_tool");
+  }
+
+  /** `call_tool` arguments, named after the properties its input schema publishes. */
+  private metaCall(mapping: string, args: Record<string, unknown>): { name: string; arguments: Record<string, unknown> } {
+    const slash = mapping.lastIndexOf("/");
+    const toolset = mapping.slice(0, slash);
+    const tool = mapping.slice(slash + 1);
+    const keys = Object.keys(this.tools.find((t) => t.name === "call_tool")?.inputSchema?.properties ?? {});
+    const toolsetKey = keys.find((k) => /toolset/i.test(k)) ?? "toolset_name";
+    const toolKey = keys.find((k) => /tool/i.test(k) && !/toolset/i.test(k)) ?? keys.find((k) => /^name$/i.test(k)) ?? "tool_name";
+    const argsKey = keys.find((k) => /arg|param|input/i.test(k)) ?? "arguments";
+    return { name: "call_tool", arguments: { [toolsetKey]: toolset, [toolKey]: tool, [argsKey]: args } };
+  }
+
   private async call(key: ToolKey, args: Record<string, unknown> = {}): Promise<ToolOutput> {
     const name = this.options.mcp.tools[key];
     if (!name) throw new Error(`no UEFN MCP tool mapped for '${key}' (set mcp.tools.${key} in the config)`);
     if (!this.client || !this.connected) throw new Error("mcp adapter is not connected");
-    if (!this.tools.some((t) => t.name === name)) {
+    if (!this.hasTool(name)) {
       throw new Error(`UEFN MCP server does not expose tool '${name}' (mapped from '${key}')`);
     }
-    const result = await this.client.callTool({ name, arguments: args }, undefined, {
+    const request = this.tools.some((t) => t.name === name) ? { name, arguments: args } : this.metaCall(name, args);
+    const result = await this.client.callTool(request, undefined, {
       timeout: this.options.mcp.timeout_ms,
     });
     const content = Array.isArray(result.content) ? result.content : [];
@@ -190,14 +218,23 @@ export class McpUefnAdapter implements UEFNAdapter {
     const mapped = (key: ToolKey, feature: string): Capability => {
       const name = this.options.mcp.tools[key];
       if (!name) return { feature, status: "UNKNOWN", notes: `map mcp.tools.${key} to a UEFN tool` };
-      const exists = this.tools.some((t) => t.name === name);
+      const exists = this.hasTool(name);
       return exists
-        ? { feature, status: "DIRECT", via: `mcp:${name}` }
+        ? { feature, status: "DIRECT", via: `mcp:${name}`, ...(this.tools.some((t) => t.name === name) ? {} : { notes: "through call_tool" }) }
         : { feature, status: "UNKNOWN", via: `mcp:${name}`, notes: "mapped tool not exposed by server" };
     };
+    // Meta-tool servers hide their toolsets behind list_toolsets; include its
+    // answer so one capability dump shows the real toolset and tool names.
+    let toolsets: string | undefined;
+    if (this.client && this.tools.some((t) => t.name === "list_toolsets")) {
+      const out = await this.client.callTool({ name: "list_toolsets", arguments: {} }).catch(() => undefined);
+      const content = Array.isArray(out?.content) ? out.content : [];
+      toolsets = content.filter((c): c is { type: "text"; text: string } => c?.type === "text").map((c) => c.text).join("\n");
+    }
     return {
       adapter: this.name,
-      tools: this.tools,
+      tools: this.tools.map(({ name, description }) => ({ name, ...(description ? { description } : {}) })),
+      ...(toolsets !== undefined ? { toolsets } : {}),
       capabilities: [
         mapped("project_info", "project info"),
         mapped("compile", "compile"),

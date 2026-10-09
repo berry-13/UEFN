@@ -41,6 +41,12 @@ classified as:
    `CompileVerse`, `StartSession`, `StopSession`, `GetSessionStatus`,
    `GetGameState`, `StartGame`, `StopGame`, `PushChanges`,
    `GetClientLogEntries` (unconfirmed).
+   UEFN 42.30 runs in meta-tool mode (seen in a live editor log: "registered
+   3 meta-tools", `list_toolsets` / `describe_toolset` / `call_tool`), so
+   map an operation as `<toolset>/<tool>`, for example
+   `start_game: ValkyrieToolset.SessionToolset/StartGame`. DevTools then sends
+   it through `call_tool`, using the argument names `call_tool` publishes.
+   `uefn capabilities` prints the `list_toolsets` output.
 4. Set `runtime.log_path` to the editor log,
    `C:/Users/<you>/AppData/Local/UnrealEditorFortnite/Saved/Logs/UnrealEditorFortnite.log`
    (from WSL: `/mnt/c/Users/<you>/AppData/Local/...`). Runtime Verse `Print`

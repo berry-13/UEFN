@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { McpAdapterConfig } from "@uefn-devtools/protocol";
 import { McpUefnAdapter } from "@uefn-devtools/uefn";
@@ -58,6 +60,68 @@ test("start_game / end_game go through mapped MCP tools; player actions stay uns
     assert.equal(teleport.unsupported, true);
     // No `headed` argument reaches start_session.
     assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), ["StartSession", "StartGame", "StopGame"]);
+  } finally {
+    await adapter.disconnect();
+  }
+});
+
+/** A meta-tool server like UEFN 42.30: only list_toolsets / describe_toolset / call_tool are listed. */
+async function metaServer(dir: string): Promise<{ script: string; calls: string }> {
+  const calls = join(dir, "calls.txt");
+  const script = join(dir, "meta.mjs");
+  const mcp = import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js");
+  const stdio = import.meta.resolve("@modelcontextprotocol/sdk/server/stdio.js");
+  // zod comes from the protocol package, which depends on it.
+  const zod = pathToFileURL(createRequire(fileURLToPath(import.meta.resolve("@uefn-devtools/protocol"))).resolve("zod")).href;
+  await writeFile(
+    script,
+    `import { McpServer } from ${JSON.stringify(mcp)};
+import { StdioServerTransport } from ${JSON.stringify(stdio)};
+import { z } from ${JSON.stringify(zod)};
+import { appendFileSync } from "node:fs";
+const server = new McpServer({ name: "fake-uefn-meta", version: "0" });
+server.registerTool("list_toolsets", { description: "list" }, async () => ({ content: [{ type: "text", text: "ValkyrieToolset.SessionToolset" }] }));
+server.registerTool("describe_toolset", { description: "describe", inputSchema: { toolset_name: z.string() } }, async () => ({ content: [{ type: "text", text: "{}" }] }));
+server.registerTool(
+  "call_tool",
+  { description: "call", inputSchema: { toolset_name: z.string(), tool_name: z.string(), arguments: z.record(z.string(), z.unknown()).optional() } },
+  async (a) => {
+    appendFileSync(${JSON.stringify(calls)}, a.toolset_name + "/" + a.tool_name + "\\n");
+    return { content: [{ type: "text", text: "Completed" }] };
+  },
+);
+await server.connect(new StdioServerTransport());
+`,
+  );
+  await writeFile(calls, "");
+  return { script, calls };
+}
+
+test("toolset/tool mappings route through call_tool on a meta-tool server", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-mcp-meta-"));
+  const { script, calls } = await metaServer(dir);
+  const log = join(dir, "UnrealEditorFortnite.log");
+  await writeFile(log, "");
+  const S = "ValkyrieToolset.SessionToolset";
+  const adapter = new McpUefnAdapter({
+    mcp: McpAdapterConfig.parse({
+      command: process.execPath,
+      args: [script],
+      tools: { start_session: `${S}/StartSession`, start_game: `${S}/StartGame`, end_game: "NotListed" },
+      timeout_ms: 20_000,
+    }),
+    logPath: log,
+  });
+  try {
+    await adapter.connect();
+    const report = await adapter.describeCapabilities();
+    assert.equal(report.toolsets, S);
+    assert.equal(report.capabilities.find((c) => c.feature === "start game")?.status, "DIRECT");
+    assert.equal(report.capabilities.find((c) => c.feature === "end game")?.status, "UNKNOWN");
+    await adapter.startSession();
+    assert.deepEqual([...adapter.transport().supportedCommands()], ["start_game"]);
+    assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true });
+    assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), [`${S}/StartSession`, `${S}/StartGame`]);
   } finally {
     await adapter.disconnect();
   }
