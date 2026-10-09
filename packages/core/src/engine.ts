@@ -53,6 +53,7 @@ export function createAdapter(loaded: LoadedConfig, kind: DevToolsConfig["adapte
   return new McpUefnAdapter({
     mcp: config.mcp,
     ...(config.runtime.log_path ? { logPath: resolve(root, config.runtime.log_path) } : {}),
+    ...(config.scenario.enabled ? { scenario: { stepTimeoutMs: parseDuration(config.scenario.step_timeout) } } : {}),
   });
 }
 

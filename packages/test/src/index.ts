@@ -30,6 +30,7 @@ export { correlateFailures } from "./correlate.ts";
 export { normalizeEventType, slugify } from "./names.ts";
 export { generateYamlTest, recordedState, type GenerateOptions, type GeneratedTest } from "./generate.ts";
 export { loadStepScript } from "./script.ts";
+export { generateScenario, findYamlTest, scenarioClassName, ScenarioError, type GeneratedScenario, type ScenarioOptions, type ScenarioPlanStep } from "./scenario.ts";
 export { TestContext } from "./context.ts";
 export { createFixtures } from "./fixtures.ts";
 export {

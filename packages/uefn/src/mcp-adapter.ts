@@ -14,6 +14,7 @@ import type {
 } from "./adapter.ts";
 import { RealClock, type Clock } from "./clock.ts";
 import { LogFileTransport } from "./log-transport.ts";
+import { ScenarioTransport } from "./scenario-transport.ts";
 
 type McpConfig = DevToolsConfig["mcp"];
 type ToolKey = keyof McpConfig["tools"];
@@ -21,6 +22,8 @@ type ToolKey = keyof McpConfig["tools"];
 export interface McpAdapterOptions {
   mcp: McpConfig;
   logPath?: string;
+  /** Player actions are performed by a generated in-game scenario device (docs/scenarios.md). */
+  scenario?: { stepTimeoutMs: number };
 }
 
 interface ToolOutput {
@@ -201,7 +204,10 @@ export class McpUefnAdapter implements UEFNAdapter {
     if (!this.options.logPath) {
       throw new Error("runtime.log_path must point at the UEFN output log so runtime events can be observed");
     }
-    const transport = new McpCommandTransport(new LogFileTransport({ path: this.options.logPath, clock: this.clock }), this);
+    const commands = new McpCommandTransport(new LogFileTransport({ path: this.options.logPath, clock: this.clock }), this);
+    const transport = this.options.scenario
+      ? new ScenarioTransport(commands, { clock: this.clock, stepTimeoutMs: this.options.scenario.stepTimeoutMs })
+      : commands;
     this.session = { id: `uefn-${Date.now().toString(36)}`, transport };
     return { id: this.session.id, reused };
   }
