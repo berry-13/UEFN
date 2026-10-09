@@ -67,6 +67,7 @@ export class DevToolsEngine {
   private pump?: Promise<void>;
   private ready = false;
   private connected = false;
+  private warnedPersistence = false;
   lastCompile?: CompileResult;
   /** SQLite sink and query layer; undefined when `persistence.enabled` is false. */
   readonly db?: DevToolsDatabase;
@@ -87,8 +88,16 @@ export class DevToolsEngine {
       this.events.subscribe((event) => {
         const session = this.currentSession;
         if (!session) return;
-        this.db?.queueEvent(session.id, event);
-        if (event.type === EventTypes.GameStarted || event.type === EventTypes.GameEnded) this.db?.upsertSession(session);
+        try {
+          this.db?.queueEvent(session.id, event);
+          if (event.type === EventTypes.GameStarted || event.type === EventTypes.GameEnded) this.db?.upsertSession(session);
+        } catch (error) {
+          // Persistence must never break event delivery to later subscribers.
+          if (!this.warnedPersistence) {
+            this.warnedPersistence = true;
+            process.stderr.write(`uefn-devtools: persistence error: ${error instanceof Error ? error.message : String(error)}\n`);
+          }
+        }
       });
     }
     // persistence: end
@@ -196,21 +205,36 @@ export class DevToolsEngine {
 
   async stopSession(): Promise<void> {
     if (!this.currentSession) return;
-    await this.adapter.stopSession();
-    await this.pump;
-    this.pump = undefined;
-    this.currentSession.status = "stopped";
-    this.currentSession.endedAt = Date.now();
-    this.db?.upsertSession(this.currentSession); // persistence
-    this.db?.flush(); // persistence
-    this.ready = false;
+    const session = this.currentSession;
+    try {
+      await this.adapter.stopSession();
+      await this.pump;
+    } finally {
+      this.pump = undefined;
+      session.status = "stopped";
+      session.endedAt = Date.now();
+      this.ready = false;
+      // persistence: begin
+      try {
+        this.db?.upsertSession(session);
+      } finally {
+        this.db?.flush();
+      }
+      // persistence: end
+    }
   }
 
   async close(): Promise<void> {
-    await this.stopSession();
-    if (this.connected) await this.adapter.disconnect();
-    this.connected = false;
-    this.db?.close(); // persistence
+    try {
+      await this.stopSession();
+    } finally {
+      try {
+        if (this.connected) await this.adapter.disconnect();
+      } finally {
+        this.connected = false;
+        this.db?.close(); // persistence
+      }
+    }
   }
 
   /** Sends a command to the runtime; throws {@link CommandError} on failure. */

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DevToolsDatabase, EventStore, SCHEMA_VERSION } from "@uefn-devtools/core";
+import { DevToolsDatabase, DevToolsEngine, EventStore, SCHEMA_VERSION } from "@uefn-devtools/core";
 import type { RunSummary, RuntimeEvent, Session, TestResult } from "@uefn-devtools/protocol";
 
 const session: Session = {
@@ -121,4 +123,91 @@ test("prune removes old sessions, events and runs", async () => {
     assert.equal(db.eventsForSession("s1").length, 0);
     assert.equal(db.testHistory("a").runs, 0);
   });
+});
+
+test("concurrent first opens of one fresh database all succeed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-db-concurrent-"));
+  try {
+    const path = join(dir, "devtools.db");
+    const entry = new URL("../dist/index.js", import.meta.url).href;
+    const script = `const { DevToolsDatabase } = await import(${JSON.stringify(entry)}); const db = new DevToolsDatabase(${JSON.stringify(path)}); const v = db.schemaVersion(); db.close(); if (v < 1) process.exit(2);`;
+    const children = Array.from(
+      { length: 8 },
+      () =>
+        new Promise<void>((resolve, reject) => {
+          execFile(process.execPath, ["--input-type=module", "-e", script], (error, _out, stderr) =>
+            error ? reject(new Error(stderr || error.message)) : resolve(),
+          );
+        }),
+    );
+    await Promise.all(children);
+    const db = new DevToolsDatabase(path);
+    assert.equal(db.schemaVersion(), SCHEMA_VERSION);
+    db.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a locked database does not crash the flush timer and events persist once the lock clears", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-db-locked-"));
+  const uncaught: unknown[] = [];
+  const onUncaught = (error: unknown) => uncaught.push(error);
+  process.on("uncaughtException", onUncaught);
+  const path = join(dir, "devtools.db");
+  const writer = new DevToolsDatabase(path, { busyTimeoutMs: 1 });
+  const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
+  const locker = new DatabaseSync(path);
+  const reader = new DatabaseSync(path);
+  const count = () => Number((reader.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n);
+  try {
+    writer.upsertSession(session);
+    locker.exec("BEGIN IMMEDIATE");
+    for (const e of events) writer.queueEvent(session.id, e);
+    await new Promise((r) => setTimeout(r, 450)); // several failed timer ticks
+    assert.deepEqual(uncaught, []);
+    assert.equal(count(), 0);
+    locker.exec("COMMIT");
+    const deadline = Date.now() + 3000;
+    while (count() < events.length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    assert.equal(count(), events.length);
+    assert.deepEqual(uncaught, []);
+    assert.deepEqual(writer.eventsForSession(session.id).map((e) => e.id), events.map((e) => e.id));
+  } finally {
+    process.off("uncaughtException", onUncaught);
+    reader.close();
+    locker.close();
+    writer.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a throwing adapter.stopSession still finalises the session and closes the database", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-engine-stop-"));
+  try {
+    await writeFile(join(dir, "uefn-devtools.config.yaml"), "simulated:\n  time_scale: 100\n  boot_ms: 100\n");
+    const engine = await DevToolsEngine.open({ cwd: dir });
+    await engine.startSession();
+    const id = engine.session!.id;
+    const realStop = engine.adapter.stopSession.bind(engine.adapter);
+    engine.adapter.stopSession = async () => {
+      throw new Error("adapter exploded");
+    };
+    try {
+      await assert.rejects(engine.close(), /adapter exploded/);
+    } finally {
+      await realStop(); // release the simulated session so the process can exit
+    }
+    const db = new DevToolsDatabase(join(dir, ".devtools", "devtools.db"));
+    try {
+      const stored = db.getSession(id);
+      assert.equal(stored?.status, "stopped");
+      assert.ok(stored?.endedAt !== undefined);
+    } finally {
+      db.close();
+    }
+    assert.throws(() => engine.db?.getSession(id)); // database was closed
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

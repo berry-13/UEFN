@@ -154,13 +154,34 @@ export class DevToolsDatabase {
   private readonly nextIdx = new Map<string, number>();
   private timer?: NodeJS.Timeout;
   private closed = false;
+  private warnedFlush = false;
 
   /** `path` may be `:memory:`. */
-  constructor(readonly path: string) {
+  constructor(
+    readonly path: string,
+    options: { busyTimeoutMs?: number } = {},
+  ) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new (loadSqlite().DatabaseSync)(path);
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
+    // busy_timeout first so the WAL switch and migrations wait for other processes instead of failing.
+    this.db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(options.busyTimeoutMs ?? 5000))};`);
+    this.enableWal(options.busyTimeoutMs ?? 5000);
+    this.db.exec("PRAGMA synchronous = NORMAL;");
     this.migrate();
+  }
+
+  /** The journal mode switch can fail with SQLITE_BUSY without consulting busy_timeout, so retry it here. */
+  private enableWal(timeoutMs: number): void {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        this.db.exec("PRAGMA journal_mode = WAL;");
+        return;
+      } catch (error) {
+        if (Date.now() >= deadline || !/locked|busy/i.test(error instanceof Error ? error.message : String(error))) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 + Math.floor(Math.random() * 15));
+      }
+    }
   }
 
   private migrate(): void {
@@ -168,6 +189,8 @@ export class DevToolsDatabase {
     for (const m of MIGRATIONS) {
       if (m.version <= this.schemaVersion()) continue;
       this.transaction(() => {
+        // Another process may have applied it while we waited for the write lock.
+        if (m.version <= this.schemaVersion()) return;
         this.db.exec(m.sql);
         this.db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)").run(m.version, Date.now());
       });
@@ -180,13 +203,17 @@ export class DevToolsDatabase {
   }
 
   private transaction<T>(fn: () => T): T {
-    this.db.exec("BEGIN");
+    this.db.exec("BEGIN IMMEDIATE");
     try {
       const result = fn();
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // No transaction left open (the failing statement already ended it).
+      }
       throw error;
     }
   }
@@ -235,10 +262,31 @@ export class DevToolsDatabase {
     const idx = this.nextIdx.get(sessionId) ?? 0;
     this.nextIdx.set(sessionId, idx + 1);
     this.buffer.push({ sessionId, idx, event });
-    this.timer ??= setTimeout(() => this.flush(), FLUSH_INTERVAL_MS).unref();
+    this.scheduleFlush();
   }
 
-  /** Writes all buffered events. Called on an interval, before every query, on stopSession and on close. */
+  private scheduleFlush(): void {
+    this.timer ??= setTimeout(() => this.flushFromTimer(), FLUSH_INTERVAL_MS).unref();
+  }
+
+  /** Timer path: never throws. A failed batch stays buffered and is retried on the next tick. */
+  private flushFromTimer(): void {
+    this.timer = undefined;
+    try {
+      this.flush();
+    } catch (error) {
+      if (!this.warnedFlush) {
+        this.warnedFlush = true;
+        process.stderr.write(`uefn-devtools: persistence flush failed, will retry: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+      if (!this.closed && this.buffer.length > 0) this.scheduleFlush();
+    }
+  }
+
+  /**
+   * Writes all buffered events. Called on an interval, before every query, on stopSession and on close.
+   * On failure the batch goes back to the front of the buffer and the error is rethrown.
+   */
   flush(): void {
     clearTimeout(this.timer);
     this.timer = undefined;
@@ -249,7 +297,8 @@ export class DevToolsDatabase {
       `INSERT OR REPLACE INTO events (session_id, idx, id, timestamp, type, source_type, source_id, target_type, target_id, trace_id, parent_event_id, payload)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    this.transaction(() => {
+    try {
+      this.transaction(() => {
       for (const { sessionId, idx, event: e } of batch) {
         insert.run(
           sessionId,
@@ -266,7 +315,11 @@ export class DevToolsDatabase {
           JSON.stringify(e.payload),
         );
       }
-    });
+      });
+    } catch (error) {
+      this.buffer = batch.concat(this.buffer);
+      throw error;
+    }
   }
 
   /** Stores a finished run and its per-test results. Re-recording a run id replaces it. */
@@ -403,9 +456,14 @@ export class DevToolsDatabase {
 
   close(): void {
     if (this.closed) return;
-    this.flush();
-    this.closed = true;
-    this.db.close();
+    try {
+      this.flush();
+    } finally {
+      this.closed = true;
+      clearTimeout(this.timer);
+      this.timer = undefined;
+      this.db.close();
+    }
   }
 }
 
