@@ -1,0 +1,17 @@
+name: Scenario eliminates a grounded player
+id: eliminate-live
+timeout: 180s
+setup:
+  - start_game
+  - spawn_player: { id: player1 }
+steps:
+  - teleport: { player: player1, location: Ground }
+  - wait: 5s
+  - eliminate: { player: player1 }
+  - wait: 1s
+assert:
+  - player: { id: player1, alive: false }
+  - event:
+      type: player.eliminated
+      match: { player: player1 }
+      times: 1

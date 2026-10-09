@@ -83,7 +83,7 @@ classified as:
 | Client log search | DIRECT | SessionToolset `GetClientLogEntries(Pattern, StartLine)` (not used yet) | binary (42.30) | ☐ |
 | Player actions: teleport, enter, leave | INSTRUMENTED | generated scenario device (`uefn scenario`, [scenarios](scenarios.md)) | live (42.30) | ✅ |
 | Player actions: damage | INSTRUMENTED | scenario device calls `Damage`; health 100 → 75 asserted live (no effect during the sky-spawn state) | live (42.30) | ✅ |
-| Player actions: eliminate | INSTRUMENTED | scenario device applies lethal `Damage` | not run live | ☐ |
+| Player actions: eliminate | INSTRUMENTED | scenario device applies lethal `Damage` and reports `player.eliminated` when health reads 0 | live (42.30) | ✅ |
 | Screenshots | UNKNOWN | none found | | ☐ |
 | Profiling: event throughput, causal latency, stage timings | DERIVED | `buildProfile` over the event log and runner stages (docs/profiler.md) | | ✅ (simulated only) |
 | Profiling: scoped timings and runtime samples | INSTRUMENTED | `ProfileBegin` / `ProfileEnd` / `ProfileSpan` / `PerfSample` in `devtools.verse` → `perf.span` / `perf.sample`; time source `GetSimulationElapsedTime` (per-frame, so spans only measure work that suspends) | | ☐ |
@@ -102,7 +102,7 @@ skip. Any one of these options could close the gap. All are unverified:
    session tools (binary evidence, unverified live), which DevTools sends when
    `mcp.tools.start_game` / `end_game` are mapped. No tool acts on players in
    the running match, so player actions still need option 2 or 3.
-2. **Scenario device (INSTRUMENTED, built: `uefn scenario`, [scenarios](scenarios.md); teleport and damage verified live).** DevTools generates a Verse device from
+2. **Scenario device (INSTRUMENTED, built: `uefn scenario`, [scenarios](scenarios.md); teleport, damage and eliminate verified live).** DevTools generates a Verse device from
    the test definition into `/DevTools/generated/`. When the game starts, the
    device drives the developer's own player (`fort_character.TeleportTo`,
    damage, etc.) through the steps. Selecting a test means recompiling with

@@ -37,6 +37,8 @@ test("player actions become ordered, confirmed device steps", () => {
   assert.match(g.verse, /TeleportTo\[vector3\{X := 1200\.0, Y := 400\.0, Z := 0\.0\}/);
   assert.match(g.verse, /TeleportTo\[vector3\{X := 3200\.0, Y := 400\.0, Z := 0\.0\}/, "leave moves away from the area");
   assert.match(g.verse, /devtools_emitter\{SeqStart := 1000000\}/);
+  assert.match(g.verse, /if \(Character\.GetHealth\(\) <= 0\.0\):\n\s+Emitter\.Emit\("player\.eliminated"/, "eliminate reports an observed elimination");
+  assert.equal(g.verse.match(/player\.eliminated/g)?.length, 1, "only the eliminate step reports eliminations");
   assert.equal(g.warnings.length, 2, g.warnings.join("\n"));
 });
 

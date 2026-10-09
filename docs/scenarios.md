@@ -41,7 +41,7 @@ for the simulator can reuse its device positions.
 | `teleport` / `enter` | `TeleportTo` the named location | `player.moved` (actual position), `scenario.step` |
 | `leave` | `TeleportTo` 2000 units away from the area | `player.moved`, `scenario.step` |
 | `damage: { amount }` | `Damage(amount)` | `player.state_changed` (health, shield), `scenario.step` |
-| `eliminate` | `Damage` large enough to eliminate | `player.state_changed`, `scenario.step` |
+| `eliminate` | `Damage` large enough to eliminate | `player.state_changed`, `player.eliminated` when health reads 0, `scenario.step` |
 | `wait` | `Sleep` | none |
 | `start_game` / `end_game` | nothing (the host does it over MCP) | |
 | `wait_for` | not mirrored: the device cannot see DevTools events | |
@@ -59,7 +59,8 @@ player moved.
   100 → 75 asserted) and step reporting. `Damage` has no effect while the
   player is still in the island's sky-spawn state: land the player first
   (teleport to the ground, then `wait`), and assert the resulting health
-  rather than only that a report arrived. `eliminate` has not run live.
+  rather than only that a report arrived. `eliminate` verified live too
+  (health 0, `alive: false`).
 - Steps run in order on the device's own clock. The host checks each report
   in order and fails on a mismatch (`was 'damage_player' in game but the
   test sent 'teleport'`), a device-side failure, or a timeout.

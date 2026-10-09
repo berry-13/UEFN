@@ -110,3 +110,14 @@ instead of a bare MCP timeout.
 [UEFN-DEVTOOLS]|1|E|1000004|player.moved|player=player1|position:v=757.000000,351.000000,484.000000
 [UEFN-DEVTOOLS]|1|E|1000006|player.state_changed|player=player1|health:f=75.000000|shield:f=0.000000
 ```
+
+### Eliminate
+
+`uefn test eliminate-live` (same setup, then `eliminate`) passed with
+`alive: false` asserted; the device saw health 0 and reported the
+elimination:
+
+```
+[UEFN-DEVTOOLS]|1|E|1000006|player.state_changed|player=player1|health:f=0.000000|shield:f=0.000000
+[UEFN-DEVTOOLS]|1|E|1000007|player.eliminated|player=player1
+```

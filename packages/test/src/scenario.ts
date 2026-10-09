@@ -124,6 +124,13 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
       ...withCharacter(player.index, step, [
         `            Character.Damage(${verseFloat(amount)})`,
         `            ReportHealth(${verseString(player.name)}, Character)`,
+        // Only what the device observes: an elimination is reported when health reads 0.
+        ...(action === "eliminate_player"
+          ? [
+              `            if (Character.GetHealth() <= 0.0):`,
+              `                Emitter.Emit("player.eliminated", array{DevToolsString("player", ${verseString(player.name)})})`,
+            ]
+          : []),
         ...confirm(action, player.name, description, "            "),
       ]),
     );
