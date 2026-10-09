@@ -48,6 +48,9 @@ export class EventsProvider implements vscode.TreeDataProvider<EventNode> {
   }
 
   add(event: RuntimeEvent): void {
+    // Profiler samples arrive continuously and would push gameplay events out
+    // of the capped list; `uefn profile` and the dashboard cover them.
+    if (event.type.startsWith("perf.")) return;
     this.events.unshift(event);
     if (this.events.length > MAX_EVENTS) this.events.length = MAX_EVENTS;
     // Coalesce bursts into one tree refresh.
@@ -205,7 +208,7 @@ export class StateProvider implements vscode.TreeDataProvider<StateNode> {
             d.state ?? (d.enabled ? "enabled" : "disabled"),
             d.state && !d.enabled ? "disabled" : undefined,
             d.owner !== undefined ? `owner team ${d.owner}` : undefined,
-            d.progress !== undefined ? `progress ${Math.round(d.progress * 100)}%` : undefined,
+            d.progress !== undefined ? `progress ${Math.round(d.progress)}%` : undefined,
             d.triggerCount ? `triggered ${d.triggerCount}x` : undefined,
           ]
             .filter(Boolean)
