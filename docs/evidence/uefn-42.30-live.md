@@ -92,10 +92,21 @@ and `uefn test scenario-live` passed (100s). From the editor log:
 |---|---|
 | Bind player, report position | ✅ |
 | Teleport | ✅ the player moved from the sky spawn (z ≈ 21000) to exactly (0, 0, 3000) |
-| Damage | ☐ `Damage(25.0)` ran but health stayed 100: the player was still in the sky-spawn state, or the island disables damage. Not verified |
+| Damage | ✅ in `damage-live` (below); in this first run `Damage(25.0)` had no effect because the player was still in the sky-spawn state |
 | Step ordering, reports, host confirmation | ✅ |
 
 Two launches before this one stalled in UEFN's own pipeline (Session
 Inspector: Versioning failed after 31 minutes, "Unable to Play: Failed to
 resolve validation session"); DevTools now reports that case explicitly
 instead of a bare MCP timeout.
+
+### Damage on a grounded player
+
+`uefn test damage-live` (teleport onto the ground at a point traced with
+`EditorAppToolset/ScreenCoordsToWorld`, wait 5s, `damage 25`) passed with
+`health = 75` asserted exactly:
+
+```
+[UEFN-DEVTOOLS]|1|E|1000004|player.moved|player=player1|position:v=757.000000,351.000000,484.000000
+[UEFN-DEVTOOLS]|1|E|1000006|player.state_changed|player=player1|health:f=75.000000|shield:f=0.000000
+```

@@ -20,6 +20,10 @@ Then:
    level (drag it in, or `DeviceToolset/PlaceDevice` over MCP).
 3. `uefn test poc-001` and `uefn test poc-restart`. Each launches a play
    session, so the Fortnite client opens.
+4. Player actions: `uefn scenario damage-live`, compile, place the generated
+   device, then `uefn test damage-live` (needs `scenario.enabled: true` and a
+   `Ground` location on solid ground in your map; see
+   [scenarios](../../docs/scenarios.md)).
 
 On Windows with WSL in NAT mode, run the CLI with Windows Node: WSL cannot
 reach the editor's `127.0.0.1` listener.

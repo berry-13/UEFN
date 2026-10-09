@@ -28,3 +28,10 @@ runtime:
 
 persistence:
   enabled: false
+
+scenario:
+  enabled: true
+  locations:
+    # Pick solid ground in your map (EditorAppToolset/ScreenCoordsToWorld helps).
+    Ground: [757, 351, 484]
+    Sky: [0, 0, 3000]

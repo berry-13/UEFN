@@ -58,8 +58,8 @@ developing the engine, test API and agent loop. The same tests run
 against real UEFN 42.30 through its MCP server: POC-001 (compile, launch,
 detect the runtime, start and stop the match, observe and assert a Verse
 value) passes live. [`docs/capabilities.md`](docs/capabilities.md) has the
-evidence; the open gap is player actions (teleport, damage), which have no
-external channel yet.
+evidence; player actions run through a generated in-game scenario device
+([scenarios](docs/scenarios.md)), with teleport and damage verified live.
 
 ## Quick start
 

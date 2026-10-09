@@ -1,0 +1,17 @@
+name: Scenario damages a grounded player
+id: damage-live
+timeout: 180s
+setup:
+  - start_game
+  - spawn_player: { id: player1 }
+steps:
+  - teleport: { player: player1, location: Ground }
+  - wait: 5s
+  - damage: { player: player1, amount: 25 }
+  - wait: 1s
+assert:
+  - player: { id: player1, health: 75 }
+  - event:
+      type: player.state_changed
+      match: { player: player1, health: 75 }
+      times: 1
