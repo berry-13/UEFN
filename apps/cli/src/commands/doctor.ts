@@ -22,7 +22,8 @@ export const doctor: Command = {
     const configPath = str(values, "config");
     const report = await runDoctor(undefined, {
       // Without --deep only YAML tests are checked: parsing them runs no project code.
-      loadTests: deep ? loadTests : (files) => loadTests(files.filter((f) => !f.endsWith(".ts"))),
+      // Allowlist, so any other extension the loader would import (.ts, .mts) stays out.
+      loadTests: deep ? loadTests : (files) => loadTests(files.filter((f) => /\.ya?ml$/.test(f))),
       connect: deep,
       ...(configPath ? { configPath } : {}),
       ...(adapter ? { adapter } : {}),
