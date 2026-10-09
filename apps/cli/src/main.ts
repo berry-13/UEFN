@@ -52,10 +52,18 @@ async function main(): Promise<number> {
   return found.run(values, positionals);
 }
 
-main().then(
-  (code) => process.exit(code),
-  (error: Error) => {
-    console.error(error instanceof UsageError ? error.message : `error: ${error.message}`);
-    process.exit(2);
-  },
-);
+/**
+ * Exits once the event loop drains, so transports finish closing first:
+ * calling process.exit() while an HTTP client is still closing trips a libuv
+ * assertion on Windows (seen against the UEFN MCP server). The unref'd timer
+ * only forces the exit if a keep-alive socket would hold the process open.
+ */
+function finish(code: number): void {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 2000).unref();
+}
+
+main().then(finish, (error: Error) => {
+  console.error(error instanceof UsageError ? error.message : `error: ${error.message}`);
+  finish(2);
+});
