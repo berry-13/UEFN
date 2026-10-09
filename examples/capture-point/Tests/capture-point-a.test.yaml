@@ -29,3 +29,5 @@ assert:
   - event:
       type: ScoreChanged
       times: 1
+
+  - snapshot: captured-state

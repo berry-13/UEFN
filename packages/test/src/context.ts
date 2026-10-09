@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AssertionResult, StepResult } from "@uefn-devtools/protocol";
 import type { DevToolsEngine } from "@uefn-devtools/core";
+import type { SnapshotEnv } from "./snapshot.ts";
 
 export interface TestOptions {
   /** Session-clock timeout for the whole test (`30s`, `500ms` or milliseconds). */
@@ -40,6 +41,8 @@ export class TestContext {
   readonly steps: StepResult[] = [];
   readonly assertions: AssertionResult[] = [];
   aborted?: string;
+  /** Unnamed `toMatchSnapshot()` calls are numbered per attempt. */
+  snapshotCounter = 0;
 
   constructor(
     readonly engine: DevToolsEngine,
@@ -47,6 +50,7 @@ export class TestContext {
     readonly startIndex: number,
     readonly expectTimeout: number,
     readonly expectSettle: number,
+    readonly snapshotEnv?: SnapshotEnv,
   ) {}
 
   ensureActive(): void {

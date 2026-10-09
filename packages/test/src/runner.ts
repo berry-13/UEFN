@@ -29,6 +29,8 @@ export interface RunOptions {
   skipBuild?: boolean;
   /** Leave the session running for the next invocation. */
   keepSession?: boolean;
+  /** Overwrite stored state snapshots instead of comparing (`--update-snapshots`). */
+  updateSnapshots?: boolean;
   /** Restrict to these files (absolute or relative to project root). */
   files?: string[];
   onEvent?: (event: RunnerEvent) => void;
@@ -128,7 +130,7 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       for (let iteration = 0; iteration < repeat; iteration++) {
         let attempt: TestAttempt | undefined;
         for (let retry = 0; retry <= retries; retry++) {
-          const run = await runAttempt(engine, def, iteration, (options.seed ?? 1) + iteration, stage);
+          const run = await runAttempt(engine, def, iteration, (options.seed ?? 1) + iteration, stage, options.updateSnapshots === true);
           attempt = run.attempt;
           if (attempt.status !== "passed") {
             attempt.artifactDir = await writeFailureArtifacts(engine, artifactRoot, def, attempt, run.fromIndex, repeat > 1);
@@ -177,6 +179,7 @@ async function runAttempt(
   iteration: number,
   seed: number,
   stage: (s: RunStage, test?: string, iteration?: number) => void,
+  updateSnapshots: boolean,
 ): Promise<{ attempt: TestAttempt; fromIndex: number }> {
   const startedAt = engine.now();
   const timeoutMs = parseDuration(def.options.timeout ?? engine.config.tests.timeout);
@@ -196,6 +199,7 @@ async function runAttempt(
     engine.events.mark(),
     parseDuration(engine.config.tests.expect_timeout),
     parseDuration(engine.config.tests.expect_settle),
+    { testId: def.id, file: def.file, update: updateSnapshots },
   );
   const fixtures = createFixtures(ctx);
 

@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 import { CONFIG_FILE, DevToolsEngine, EventStore, captureGitInfo, formatCausalTree } from "@uefn-devtools/core";
 import { RuntimeEvent } from "@uefn-devtools/protocol";
 import { consoleReporter, runTests } from "@uefn-devtools/test";
+import { cmdRecord } from "./commands/record.ts";
 
 const HELP = `uefn — UEFN DevTools
 
@@ -17,6 +18,7 @@ Commands
   capabilities           What the adapter can do (DIRECT/INSTRUMENTED/...)
   compile                Compile Verse through the adapter
   test [filter]          Compile, start/reuse a session, run tests, assert
+  record [name]          Record a session and generate a YAML test from it
   trace <event-id>       Causal tree of an event from a recorded events.jsonl
   mcp                    Serve the DevTools MCP server over stdio
   init                   Write a starter ${CONFIG_FILE}
@@ -33,6 +35,14 @@ test options
   --no-compile           Skip the Verse build stage
   --watch                Re-run when Verse or test files change
   --verbose              Print every iteration with --repeat
+  --update-snapshots     Write/overwrite state snapshots instead of comparing
+
+record options
+  --duration <d>         Stop after this long (default 30s); Ctrl+C stops early
+  --out <path>           Generated test file (default <tests>/<name>.test.yaml)
+  --script <file>        Drive the simulator with YAML steps (non-interactive)
+  --from <file>          Regenerate a test from a saved .uefnrec.json recording
+  --force                Overwrite an existing test file
 
 trace options
   --file <events.jsonl>  Recorded events (from .devtools/results/...)
@@ -53,6 +63,12 @@ type Values = {
   verbose?: boolean;
   file?: string;
   mode?: string;
+  "update-snapshots"?: boolean;
+  duration?: string;
+  out?: string;
+  script?: string;
+  from?: string;
+  force?: boolean;
   help?: boolean;
 };
 
@@ -72,6 +88,12 @@ function parse(argv: string[]): { command?: string; positionals: string[]; value
       verbose: { type: "boolean" },
       file: { type: "string" },
       mode: { type: "string" },
+      "update-snapshots": { type: "boolean" },
+      duration: { type: "string" },
+      out: { type: "string" },
+      script: { type: "string" },
+      from: { type: "string" },
+      force: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -178,6 +200,7 @@ async function cmdTest(values: Values, positionals: string[]): Promise<number> {
       ...(seed !== undefined ? { seed } : {}),
       ...(retries !== undefined ? { retries } : {}),
       skipBuild: values["no-compile"] === true,
+      ...(values["update-snapshots"] ? { updateSnapshots: true } : {}),
       ...(values.json ? {} : { onEvent: consoleReporter({ verbose: values.verbose === true }) }),
     });
     if (values.json) process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
@@ -224,6 +247,23 @@ async function watchTests(): Promise<number> {
   }
   run();
   return new Promise<number>(() => {});
+}
+
+async function cmdRecordCommand(values: Values, positionals: string[]): Promise<number> {
+  const engine = await openEngine(values);
+  try {
+    return await cmdRecord(engine, {
+      ...(positionals[0] ? { name: positionals[0] } : {}),
+      ...(values.duration ? { duration: values.duration } : {}),
+      ...(values.out ? { out: values.out } : {}),
+      ...(values.script ? { script: values.script } : {}),
+      ...(values.from ? { from: values.from } : {}),
+      ...(values.json ? { json: true } : {}),
+      force: values.force === true,
+    });
+  } finally {
+    await engine.close();
+  }
 }
 
 async function cmdTrace(values: Values, positionals: string[]): Promise<number> {
@@ -321,6 +361,8 @@ async function main(): Promise<number> {
       return cmdCompile(values);
     case "test":
       return cmdTest(values, positionals);
+    case "record":
+      return cmdRecordCommand(values, positionals);
     case "trace":
       return cmdTrace(values, positionals);
     case "mcp":
