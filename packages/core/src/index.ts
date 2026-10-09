@@ -6,3 +6,5 @@ export * from "./event-store.ts";
 export * from "./state.ts";
 export * from "./audit.ts";
 export * from "./engine.ts";
+export * from "./deps.ts";
+export * from "./doctor.ts";

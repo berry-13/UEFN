@@ -7,6 +7,8 @@ import { parseArgs } from "node:util";
 import { CONFIG_FILE, DevToolsEngine, EventStore, captureGitInfo, formatCausalTree } from "@uefn-devtools/core";
 import { RuntimeEvent } from "@uefn-devtools/protocol";
 import { consoleReporter, runTests } from "@uefn-devtools/test";
+import { commands } from "./commands/index.ts";
+import type { Values as CommandValues } from "./shared.ts";
 
 const HELP = `uefn — UEFN DevTools
 
@@ -20,6 +22,8 @@ Commands
   trace <event-id>       Causal tree of an event from a recorded events.jsonl
   mcp                    Serve the DevTools MCP server over stdio
   init                   Write a starter ${CONFIG_FILE}
+  doctor                 Check environment, config, tests and adapter setup
+  deps                   Verse dependency graph and test impact
 
 Global options
   --adapter <name>       simulated | mcp (overrides config)
@@ -306,7 +310,31 @@ async function cmdInit(): Promise<number> {
   return 0;
 }
 
+/** Commands registered in ./commands, parsed with their own options. */
+async function runRegistered(argv: string[]): Promise<number | undefined> {
+  const command = commands.find((c) => c.name === argv[0]);
+  if (!command) return undefined;
+  const { values, positionals } = parseArgs({
+    args: argv.slice(1),
+    allowPositionals: true,
+    options: {
+      adapter: { type: "string" },
+      config: { type: "string" },
+      json: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+      ...command.options,
+    },
+  });
+  if (values.help) {
+    process.stdout.write(`uefn ${command.usage}  ${command.summary}\n${(command.optionHelp ?? []).map((l) => `  ${l}\n`).join("")}`);
+    return 0;
+  }
+  return command.run(values as CommandValues, positionals);
+}
+
 async function main(): Promise<number> {
+  const registered = await runRegistered(process.argv.slice(2));
+  if (registered !== undefined) return registered;
   const { command, positionals, values } = parse(process.argv.slice(2));
   if (!command || values.help) {
     process.stdout.write(HELP);
