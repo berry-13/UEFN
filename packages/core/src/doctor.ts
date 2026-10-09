@@ -44,6 +44,11 @@ export interface DoctorOptions {
   adapter?: DevToolsConfig["adapter"];
   /** Validates test files (YAML schema, TypeScript imports) and returns the registered tests. */
   loadTests?: DoctorTestLoader;
+  /**
+   * Launch the configured MCP server to check it answers. Off by default:
+   * `mcp.command` comes from the project's config, so connecting runs it.
+   */
+  connect?: boolean;
   /** How long the MCP connection attempt may take. Default 10s. */
   connectTimeoutMs?: number;
   /** Node version to check, for tests. Defaults to the running process. */
@@ -369,6 +374,9 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
   if (!configured) {
     add({ id: "mcp.connect", title: "MCP server reachable", status: "skip", detail: "server not configured" });
     add({ id: "mcp.tool_names", title: "Mapped tools exist on server", status: "skip", detail: "server not configured" });
+  } else if (!options.connect) {
+    add({ id: "mcp.connect", title: "MCP server reachable", status: "skip", detail: "not attempted (runs mcp.command; use --deep)" });
+    add({ id: "mcp.tool_names", title: "Mapped tools exist on server", status: "skip", detail: "not attempted (use --deep)" });
   } else {
     const adapter = new McpUefnAdapter({ mcp });
     const timeoutMs = options.connectTimeoutMs ?? 10_000;

@@ -8,14 +8,22 @@ export const doctor: Command = {
   name: "doctor",
   usage: "doctor",
   summary: "Check the environment, config, tests and adapter setup",
+  options: { deep: { type: "boolean" } },
+  optionHelp: [
+    "--deep                 Also import TypeScript tests and launch the MCP server",
+    "                       (both run project code; off by default)",
+  ],
   async run(values) {
+    const deep = values.deep === true;
     const adapter = str(values, "adapter");
     if (adapter !== undefined && adapter !== "simulated" && adapter !== "mcp") {
       throw new UsageError(`unknown adapter '${adapter}'`);
     }
     const configPath = str(values, "config");
     const report = await runDoctor(undefined, {
-      loadTests,
+      // Without --deep only YAML tests are checked: parsing them runs no project code.
+      loadTests: deep ? loadTests : (files) => loadTests(files.filter((f) => !f.endsWith(".ts"))),
+      connect: deep,
       ...(configPath ? { configPath } : {}),
       ...(adapter ? { adapter } : {}),
     });

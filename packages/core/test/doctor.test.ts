@@ -118,7 +118,7 @@ test("mcp adapter connects and checks mapped tool names against the server", asy
     "Tests/.keep": "",
     "logs/.keep": "",
   });
-  const report = await runDoctor(undefined, { cwd: dir, connectTimeoutMs: 20_000 });
+  const report = await runDoctor(undefined, { cwd: dir, connect: true, connectTimeoutMs: 20_000 });
   assert.equal(status(report, "mcp.server")?.status, "pass");
   assert.equal(status(report, "mcp.connect")?.status, "pass", status(report, "mcp.connect")?.detail);
   assert.equal(status(report, "mcp.tool_names")?.status, "fail");
@@ -134,7 +134,7 @@ test("mcp connection failures are reported with a timeout guard", async () => {
     "Tests/.keep": "",
   });
   const started = Date.now();
-  const report = await runDoctor(undefined, { cwd: dir, connectTimeoutMs: 500 });
+  const report = await runDoctor(undefined, { cwd: dir, connect: true, connectTimeoutMs: 500 });
   assert.equal(status(report, "mcp.connect")?.status, "fail");
   assert.match(status(report, "mcp.connect")!.detail, /timed out/);
   assert.ok(Date.now() - started < 15_000);
