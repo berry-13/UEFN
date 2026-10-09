@@ -1,19 +1,24 @@
 # Architecture
 
 ```
- CLI (apps/cli)      MCP server (packages/mcp)      [desktop — later]
-        │                     │
-        └──────────┬──────────┘
-                   ▼
+ Desktop UI (apps/desktop)   VS Code (apps/vscode)
+            │ HTTP + SSE              │ HTTP + SSE / CLI --json
+            └────────────┬────────────┘
+                         ▼
+ CLI (apps/cli)   Daemon (packages/daemon)   MCP server (packages/mcp)
+        │                │                          │
+        └────────────────┼──────────────────────────┘
+                         ▼
           DevToolsEngine (packages/core)
           ├── EventStore      append-only RuntimeEvent log, queries, causal trees
           ├── GameState       derived by applyEvent(); replayable (stateAt)
           ├── Session         lifecycle + git info
+          ├── DevToolsDatabase  SQLite sink: sessions, events, runs, history
           └── UEFNAdapter ────────────────────────────┐
                    ▲                                   │
      Test runner (packages/test)                       ▼
-     test()/expect(), YAML, lifecycle        packages/uefn
-                                             ├── SimulatedAdapter  (reference world)
+     test()/expect(), YAML, snapshots,       packages/uefn
+     lifecycle, reporters, debug hooks       ├── SimulatedAdapter  (reference world)
                                              └── McpUefnAdapter    (UEFN MCP + log transport)
                                                        │
                                                        ▼
@@ -27,10 +32,13 @@
 |---|---|
 | `@uefn-devtools/protocol` | Zod schemas and types: events, traces, sessions, probes, test results, config, runtime wire format. No I/O. |
 | `@uefn-devtools/uefn` | `UEFNAdapter` and `RuntimeTransport` interfaces, plus implementations: simulator, UEFN MCP client, log-file transport. All Epic-specific code lives here. |
-| `@uefn-devtools/core` | `DevToolsEngine`: config, project discovery, git capture, event store, state reducer, waits, audit log. |
-| `@uefn-devtools/test` | Playwright-style test API, YAML tests, runner state machine, reporter, failure correlation, artifacts. |
+| `@uefn-devtools/core` | `DevToolsEngine`: config, project discovery, git capture, event store, state reducer, waits, audit log, SQLite persistence ([persistence](persistence.md)), recorder ([recorder](recorder.md)), profiler ([profiler](profiler.md)), doctor ([doctor](doctor.md)), Verse dependency graph ([deps](deps.md)). |
+| `@uefn-devtools/test` | Playwright-style test API, YAML tests, state snapshots, runner state machine, console/JUnit/GitHub reporters ([github](github.md)), failure correlation, artifacts, debug hooks and headed view ([debugging](debugging.md)). |
+| `@uefn-devtools/daemon` | `DevToolsDaemon`: one engine behind a token-protected HTTP + SSE API on 127.0.0.1, and `DaemonClient` ([daemon](daemon.md)). |
 | `@uefn-devtools/mcp` | MCP tools over the engine, with permission scopes and an audit trail. |
-| `@uefn-devtools/cli` | `uefn` command. |
+| `@uefn-devtools/cli` | `uefn` command; each subcommand is a module in `apps/cli/src/commands/`. |
+| `@uefn-devtools/desktop` | Dashboard served by the daemon and opened by `uefn ui` in an app window ([desktop](desktop.md)). |
+| `uefn-devtools-vscode` | VS Code extension over the CLI and the daemon ([vscode](vscode.md)). |
 
 ## Decisions
 
@@ -50,16 +58,35 @@
 - **Deterministic simulation.** Simulator faults use a seeded PRNG. Iteration
   *i* of `--repeat` uses seed `seed + i`, so a failing iteration can be
   re-run exactly.
-- **In-process engine for the MVP.** CLI and MCP each embed an engine. The
-  daemon from spec §83 (several clients sharing one session) is the next
-  structural step. `DevToolsEngine` is already the boundary it would wrap.
+- **One engine per process, shared through the daemon.** CLI and MCP still
+  embed an engine; the daemon (spec §83) wraps one so the dashboard, the
+  editor and scripts share a single session. It binds 127.0.0.1, checks the
+  Host header and a bearer token, and serialises session-mutating calls.
+- **SQLite is a sink, not a second source of truth.** The in-memory
+  `EventStore` stays authoritative during a session; `node:sqlite` (no native
+  dependency) records sessions, events and runs so history, flakiness and
+  traces of past sessions can be queried and replayed through the same
+  reducer.
+- **The desktop app is a local web app.** The daemon serves it and `uefn ui`
+  opens it in a chromeless browser window; there is no Electron or Tauri
+  shell. The URL carries a single-use launch ticket, never the token.
+- **Diagnostics run no project code by default.** `uefn doctor` parses YAML
+  tests only; importing TypeScript tests and launching `mcp.command` need
+  `--deep`. The VS Code extension does not run in untrusted workspaces.
 - **No arbitrary execution through MCP.** There is no shell tool. The only
   write is `uefn_create_test`, which validates the YAML, can write only a
   slug-named file inside the tests directory, and never overwrites.
 
-## Not built yet
+## Open
 
-These spec features are not implemented: desktop app, VS Code extension,
-daemon, SQLite persistence (artifacts are JSON/JSONL), recorder, doctor,
-dependency graph, profiler, snapshots, GitHub integration, `--headed` and
-`--debug`.
+Every feature on the original roadmap is built and runs against the
+simulated adapter. What is left needs a Windows machine with UEFN and
+Fortnite, so none of it can be checked from this repository alone:
+
+- POC-001 against real UEFN ([capabilities](capabilities.md#poc-001-checklist-spec-79)):
+  the MCP tool mapping, the Verse runtime emitter and the log transport.
+- The command gap: no known channel sends commands into a running session.
+- Whether UEFN's start-session tool honours the `--headed` hint, and whether
+  the Verse profiling helpers produce useful spans.
+- Interactive `uefn record` with a human player.
+- A native desktop shell, if a browser app window turns out not to be enough.
