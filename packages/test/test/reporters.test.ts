@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { RunSummary, TestAttempt } from "@uefn-devtools/protocol";
 import {
   createReporters,
+  renderGithubLog,
   escapeData,
   escapeProperty,
   escapeXml,
@@ -184,4 +185,78 @@ test("reporter selection parses lists, auto-adds github, and writes junit", asyn
   onEvent({ kind: "done", summary: SUMMARY });
   assert.equal(await readFile(join(root, ".devtools/results/junit.xml"), "utf8"), renderJunit(SUMMARY));
   assert.ok(out.some((l) => l.startsWith("::error ")), "github reporter was added");
+});
+
+test("github log keeps untrusted text inside a stop-commands region", () => {
+  const evil = "boom\n::error file=x::injected\n::add-mask::secret";
+  const summary: RunSummary = {
+    ...SUMMARY,
+    tests: [
+      {
+        ...SUMMARY.tests[1]!,
+        file: "Tests/evil\n::warning::file.ts",
+        attempts: [attempt({ iteration: 0, status: "failed", error: evil, failedStage: "ASSERTING", steps: [] })],
+        correlations: [{ description: "x\n::notice::corr", failingRuns: 1, passingRuns: 0 }],
+      },
+    ],
+  };
+  const lines = renderGithubLog(summary).join("\n").split("\n");
+  const start = lines.findIndex((l) => l.startsWith("::stop-commands::"));
+  assert.ok(start > 0, "stop-commands emitted");
+  const token = lines[start]!.slice("::stop-commands::".length);
+  assert.match(token, /^[0-9a-f-]{16,}$/);
+  const end = lines.indexOf(`::${token}::`);
+  assert.ok(end > start);
+  for (const injected of ["::error file=x::injected", "::add-mask::secret", "::warning::file.ts", "::notice::corr"]) {
+    const i = lines.indexOf(injected);
+    assert.ok(i > start && i < end, `${injected} must be inside the stopped region`);
+  }
+  assert.ok(lines.indexOf("::endgroup::") > end, "endgroup is outside the stopped region");
+  assert.ok(lines.findIndex((l) => l.startsWith("::group::")) < start);
+});
+
+test("stdoutJson keeps stdout clean and skips the json reporter", async () => {
+  const root = await mkdtemp(join(tmpdir(), "uefn-reporters-"));
+  const out: string[] = [];
+  const err: string[] = [];
+  const realOut = process.stdout.write;
+  const realErr = process.stderr.write;
+  process.stdout.write = ((t: string) => (out.push(String(t)), true)) as typeof process.stdout.write;
+  process.stderr.write = ((t: string) => (err.push(String(t)), true)) as typeof process.stderr.write;
+  try {
+    createReporters({ reporters: ["junit,github,json"], env: { GITHUB_ACTIONS: "true" }, root, stdoutJson: true })({
+      kind: "done",
+      summary: SUMMARY,
+    });
+  } finally {
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+  }
+  assert.equal(out.join(""), "");
+  assert.ok(err.join("").includes("JUnit:"));
+  assert.ok(err.join("").includes("::error "));
+  assert.ok(!err.join("").includes('"runId"'), "json reporter skipped");
+});
+
+test("one failing reporter does not stop the others", async () => {
+  const root = await mkdtemp(join(tmpdir(), "uefn-reporters-"));
+  await writeFile(join(root, "file"), "x");
+  const out: string[] = [];
+  const err: string[] = [];
+  const realErr = process.stderr.write;
+  process.stderr.write = ((t: string) => (err.push(String(t)), true)) as typeof process.stderr.write;
+  try {
+    // junit cannot create a directory under a regular file, so it throws.
+    const onEvent = createReporters({
+      reporters: ["junit", "github"],
+      output: join("file", "junit.xml"),
+      write: (t) => out.push(t),
+      root,
+    });
+    assert.doesNotThrow(() => onEvent({ kind: "done", summary: SUMMARY }));
+  } finally {
+    process.stderr.write = realErr;
+  }
+  assert.ok(err.join("").includes("warning: reporter failed"));
+  assert.ok(out.some((l) => l.startsWith("::error ")), "github reporter still ran");
 });

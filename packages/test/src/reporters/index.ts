@@ -44,6 +44,11 @@ export interface ReporterSetOptions {
   verbose?: boolean;
   env?: NodeJS.ProcessEnv;
   write?: (text: string) => void;
+  /**
+   * stdout carries a JSON document (`--json`): reporters write to stderr by default
+   * and the `json` reporter is skipped since the caller prints the summary itself.
+   */
+  stdoutJson?: boolean;
 }
 
 /**
@@ -57,7 +62,7 @@ export function createReporters(options: ReporterSetOptions = {}): (event: Runne
   if (names.length === 0) names.push("console");
   if (env["GITHUB_ACTIONS"] === "true" && !names.includes("github")) names.push("github");
   const root = options.root ?? process.cwd();
-  const write = options.write ?? ((t: string) => process.stdout.write(t));
+  const write = options.write ?? ((t: string) => (options.stdoutJson ? process.stderr : process.stdout).write(t));
   const handlers: ((event: RunnerEvent) => void)[] = [];
   for (const name of names) {
     switch (name) {
@@ -77,6 +82,7 @@ export function createReporters(options: ReporterSetOptions = {}): (event: Runne
         );
         break;
       case "json":
+        if (options.stdoutJson && !options.output) break;
         handlers.push((event) => {
           if (event.kind !== "done") return;
           const body = JSON.stringify(event.summary, null, 2) + "\n";
@@ -92,6 +98,12 @@ export function createReporters(options: ReporterSetOptions = {}): (event: Runne
     }
   }
   return (event) => {
-    for (const h of handlers) h(event);
+    for (const h of handlers) {
+      try {
+        h(event);
+      } catch (err) {
+        process.stderr.write(`warning: reporter failed: ${(err as Error).message}\n`);
+      }
+    }
   };
 }

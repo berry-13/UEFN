@@ -62,6 +62,7 @@ export const test: Command = {
                 ...(output ? { output } : {}),
                 root: engine.root,
                 verbose: values.verbose === true,
+                ...(values.json ? { stdoutJson: true } : {}),
                 ...interactive.reporter,
               }),
             }),
