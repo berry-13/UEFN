@@ -23,9 +23,12 @@ simulated:
       score: 100
 
 mcp:
-  # command: <launcher for the UEFN MCP server>
+  # UEFN 42.30+: enable the "UEFN MCP Toolsets" beta setting, then
+  # `ModelContextProtocol.GenerateClientConfig ClaudeCode` prints the URL.
+  # url: http://localhost:<port>/mcp
   # Fill these in from `uefn capabilities --adapter mcp`:
-  #   compile, start_session, stop_session, session_state, project_info
+  #   compile, start_session, stop_session, session_state, project_info,
+  #   start_game, end_game
   tools: {}
 
 runtime:

@@ -61,6 +61,9 @@ export const McpAdapterConfig = z.object({
       start_session: z.string().optional(),
       stop_session: z.string().optional(),
       session_state: z.string().optional(),
+      /** Start / stop the in-game match (UEFN 42.30 SessionToolset has both; unverified live). */
+      start_game: z.string().optional(),
+      end_game: z.string().optional(),
     })
     .default({}),
   timeout_ms: z.number().positive().default(120_000),

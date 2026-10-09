@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { CompileResult, DeviceInfo, Diagnostic, SessionStatus } from "@uefn-devtools/protocol";
+import type { CommandResult, CompileResult, DeviceInfo, Diagnostic, RuntimeCommand, RuntimeEvent, SessionStatus } from "@uefn-devtools/protocol";
 import { DevToolsConfig } from "@uefn-devtools/protocol";
 import type {
   AdapterSession,
@@ -87,6 +87,20 @@ export class McpUefnAdapter implements UEFNAdapter {
     }
   }
 
+  /** Runtime commands this server can execute through mapped tools. */
+  gameCommands(): ("start_game" | "end_game")[] {
+    return (["start_game", "end_game"] as const).filter((key) => {
+      const name = this.options.mcp.tools[key];
+      return name !== undefined && this.tools.some((t) => t.name === name);
+    });
+  }
+
+  /** Runs a mapped game command; used by {@link McpCommandTransport}. */
+  async gameCommand(key: "start_game" | "end_game"): Promise<CommandResult> {
+    const out = await this.call(key);
+    return out.isError ? { ok: false, error: out.text || `${key} failed` } : { ok: true };
+  }
+
   private async call(key: ToolKey, args: Record<string, unknown> = {}): Promise<ToolOutput> {
     const name = this.options.mcp.tools[key];
     if (!name) throw new Error(`no UEFN MCP tool mapped for '${key}' (set mcp.tools.${key} in the config)`);
@@ -132,14 +146,16 @@ export class McpUefnAdapter implements UEFNAdapter {
     const status = await this.getSessionStatus().catch(() => "none" as const);
     const reused = status === "connected" || status === "playing";
     if (!reused) {
-      // `headed` is forwarded as-is; whether the UEFN tool honours it is unverified.
-      const out = await this.call("start_session", options.headed ? { headed: true } : {});
+      // No `headed` argument: every UEFN play session launches the Fortnite
+      // client (seen in real editor logs), and an unknown argument could make
+      // a strictly validated tool reject the call.
+      const out = await this.call("start_session");
       if (out.isError) throw new Error(`UEFN refused to start a session: ${out.text}`);
     }
     if (!this.options.logPath) {
       throw new Error("runtime.log_path must point at the UEFN output log so runtime events can be observed");
     }
-    const transport = new LogFileTransport({ path: this.options.logPath, clock: this.clock });
+    const transport = new McpCommandTransport(new LogFileTransport({ path: this.options.logPath, clock: this.clock }), this);
     this.session = { id: `uefn-${Date.now().toString(36)}`, transport };
     return { id: this.session.id, reused };
   }
@@ -191,8 +207,10 @@ export class McpUefnAdapter implements UEFNAdapter {
         this.options.logPath
           ? { feature: "runtime events", status: "INSTRUMENTED", via: "Verse Print → output log" }
           : { feature: "runtime events", status: "UNKNOWN", notes: "set runtime.log_path" },
+        mapped("start_game", "start game"),
+        mapped("end_game", "end game"),
         {
-          feature: "runtime commands",
+          feature: "player actions",
           status: "UNKNOWN",
           notes: "no inbound channel identified; steps run from an in-game scenario device",
         },
@@ -205,22 +223,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const DIAGNOSTIC_LINE = /^(?<file>[^\s(][^(]*?\.verse)\((?<line>\d+)(?:,\s*(?<col>\d+))?[^)]*\)\s*:\s*(?<sev>error|warning)\s*(?<code>\w+)?\s*:?\s*(?<msg>.*)$/i;
+/**
+ * A Verse compiler diagnostic. Real UEFN 41.10 lines look like
+ * `[...]VerseBuild: Error: C:/.../GameManager.verse(1111,55, 1111,83): Script error 3512: msg`
+ * (each printed twice, the second time with `) :`); the bare
+ * `file.verse(l,c): error X: msg` form is accepted too.
+ */
+const DIAGNOSTIC_LINE =
+  /^(?:\[[^\]]*\]\[\s*\d+\]VerseBuild:\s(?:Error|Warning):\s)?(?<file>[^\s(][^(]*?\.verse)\((?<line>\d+)(?:,\s*(?<col>\d+))?(?:,\s*\d+,\s*\d+)?\)\s*:\s*(?:Script\s+)?(?<sev>error|warning)\s*(?<code>\w+)?\s*:?\s*(?<msg>.*)$/i;
 
 /** Accepts structured diagnostics when offered, else parses `file.verse(l,c): error X: msg` lines. */
 export function extractDiagnostics(out: ToolOutput): Diagnostic[] {
   if (isRecord(out.json) && Array.isArray(out.json["diagnostics"])) {
-    return (out.json["diagnostics"] as unknown[]).filter(isRecord).map((d) => ({
-      severity: d["severity"] === "warning" || d["severity"] === "info" ? d["severity"] : "error",
-      message: String(d["message"] ?? ""),
-      ...(typeof d["file"] === "string" ? { file: d["file"] } : {}),
-      ...(typeof d["line"] === "number" ? { line: d["line"] } : {}),
-    }));
+    return (out.json["diagnostics"] as unknown[]).filter(isRecord).map((d) => {
+      // UEFN 42.30 names severities Error / Warning / Information / Hint.
+      const sev = String(d["severity"] ?? d["Severity"] ?? "error").toLowerCase();
+      const file = d["file"] ?? d["File"] ?? d["filePath"] ?? d["FilePath"];
+      const message = d["message"] ?? d["Message"];
+      return {
+        severity: sev === "warning" ? "warning" : sev === "info" || sev === "information" || sev === "hint" ? "info" : "error",
+        message: String(message ?? ""),
+        ...(typeof file === "string" ? { file } : {}),
+        ...(typeof d["line"] === "number" ? { line: d["line"] } : {}),
+      };
+    });
   }
   const diagnostics: Diagnostic[] = [];
+  const seen = new Set<string>();
   for (const line of out.text.split(/\r?\n/)) {
     const m = DIAGNOSTIC_LINE.exec(line.trim());
     if (!m?.groups) continue;
+    const key = [m.groups["file"], m.groups["line"], m.groups["col"], m.groups["code"], m.groups["sev"]!.toLowerCase()].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
     diagnostics.push({
       severity: m.groups["sev"]!.toLowerCase() === "warning" ? "warning" : "error",
       message: m.groups["msg"]!.trim(),
@@ -232,4 +267,42 @@ export function extractDiagnostics(out: ToolOutput): Diagnostic[] {
   }
   if (out.isError && diagnostics.length === 0) diagnostics.push({ severity: "error", message: out.text || "compile failed" });
   return diagnostics;
+}
+
+/**
+ * The session's runtime transport: events come from the log, and the match
+ * start / end commands go through mapped MCP tools when the server has them.
+ */
+class McpCommandTransport implements RuntimeTransport {
+  readonly name: string;
+
+  constructor(
+    private readonly inner: RuntimeTransport,
+    private readonly adapter: McpUefnAdapter,
+  ) {
+    this.name = `${inner.name}+mcp`;
+  }
+
+  start(): Promise<void> {
+    return this.inner.start();
+  }
+
+  stop(): Promise<void> {
+    return this.inner.stop();
+  }
+
+  receive(): AsyncIterable<RuntimeEvent> {
+    return this.inner.receive();
+  }
+
+  async command(command: RuntimeCommand): Promise<CommandResult> {
+    if ((command.type === "start_game" || command.type === "end_game") && this.adapter.gameCommands().includes(command.type)) {
+      return this.adapter.gameCommand(command.type);
+    }
+    return this.inner.command(command);
+  }
+
+  supportedCommands(): readonly RuntimeCommand["type"][] {
+    return [...this.adapter.gameCommands(), ...this.inner.supportedCommands()];
+  }
 }

@@ -83,10 +83,13 @@ Every feature on the original roadmap is built and runs against the
 simulated adapter. What is left needs a Windows machine with UEFN and
 Fortnite, so none of it can be checked from this repository alone:
 
-- POC-001 against real UEFN ([capabilities](capabilities.md#poc-001-checklist-spec-79)):
-  the MCP tool mapping, the Verse runtime emitter and the log transport.
-- The command gap: no known channel sends commands into a running session.
-- Whether UEFN's start-session tool honours the `--headed` hint, and whether
-  the Verse profiling helpers produce useful spans.
+- POC-001 against a live UEFN 42.30 session
+  ([capabilities](capabilities.md#poc-001-checklist-spec-79)): confirm the MCP
+  tool names (one `uefn capabilities --adapter mcp --json` dump), compile the
+  Verse runtime emitter, and see DevTools lines reach the editor log. The log
+  transport and diagnostics parser are already tested on real 41.10 logs.
+- Player actions in a running match: `StartGame`/`StopGame` exist, but no
+  tool acts on players, so the scenario device (option 2) is still needed.
+- Whether the Verse profiling helpers produce useful spans.
 - Interactive `uefn record` with a human player.
 - A native desktop shell, if a browser app window turns out not to be enough.

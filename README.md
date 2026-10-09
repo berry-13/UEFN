@@ -36,12 +36,12 @@ Duration: 0.83s
 |---|---|
 | Test runner: TS + YAML, lifecycle state machine, repeat/seed, failure correlation, artifacts | working |
 | State snapshots (`toMatchSnapshot`, YAML `snapshot:`, `--update-snapshots`) | working |
-| `--headed` live state view and `--debug` step debugger | working (simulated; `headed` hint to UEFN unverified) |
+| `--headed` live state view and `--debug` step debugger | working (UEFN sessions always launch the client, so `--headed` only matters for the simulator) |
 | Engine: event store, derived state, causal traces, time-travel replay, git capture | working |
 | SQLite persistence: sessions, events, runs, per-test history (`uefn history`) | working |
 | Daemon: one shared engine and session over a local HTTP + SSE API | working |
 | Desktop dashboard (`uefn ui`): live state, events, time travel, tests | working |
-| VS Code extension: Test Explorer, Verse diagnostics, live events, YAML schema | packaged and smoke-tested; most views unverified in the editor |
+| VS Code extension: Test Explorer, Verse diagnostics, live events, YAML schema | working (verified in a VS Code 1.100 extension host) |
 | Recorder (`uefn record`): observed session to a YAML test | working (scripted on the simulator; interactive needs real UEFN) |
 | `uefn doctor` and `uefn deps` (Verse dependency graph, test impact) | working |
 | Profiler (`uefn profile`, Chrome trace export, `uefn_profile` MCP tool) | working on the simulator; Verse helpers unverified |
@@ -49,15 +49,18 @@ Duration: 0.83s
 | CLI: `status`, `doctor`, `capabilities`, `compile`, `list`, `test`, `profile`, `trace`, `deps`, `record`, `history`, `daemon`, `ui`, `mcp`, `init`, `ci` | working |
 | MCP server (21 tools, permission modes, audit log) | working |
 | Simulated adapter: deterministic capture-point world with fault injection and perf samples | working |
-| UEFN MCP adapter + log-file transport | written, **not yet verified against UEFN** |
+| Log transport and compile-diagnostics parser | tested against real UEFN 41.10 editor logs; game start/end derived from the log |
+| UEFN MCP adapter (compile, sessions, `StartGame`/`StopGame`) | built for the UEFN 42.30 MCP server (seen in the shipped binaries), **not yet driven live** |
 | Verse runtime emitter (`runtime/verse`) | written, **not yet compiled in UEFN** |
 
 Everything runs today against the **simulated adapter**. That covers
-developing the engine, test API and agent loop. It does not prove the
-product's main risk, which is runtime observability inside real Fortnite.
-[`docs/capabilities.md`](docs/capabilities.md) lists what has to be checked,
-how to check it, and the open gap: there is no known channel for sending
-commands into a running session.
+developing the engine, test API and agent loop. The real-UEFN path has
+been checked against real editor logs and the shipped UEFN 42.30 binaries,
+but no live session has been driven yet.
+[`docs/capabilities.md`](docs/capabilities.md) lists the evidence, what is
+left to check, and how: UEFN 42.30 ships an MCP server that covers compile,
+sessions and match start/stop, while player actions still have no external
+channel.
 
 ## Quick start
 

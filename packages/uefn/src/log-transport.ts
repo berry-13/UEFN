@@ -1,12 +1,27 @@
 import { open, stat } from "node:fs/promises";
+import { StringDecoder } from "node:string_decoder";
 import type { CommandResult, RuntimeCommand, RuntimeEvent } from "@uefn-devtools/protocol";
 import { EventTypes, WIRE_MARKER, parseWireLine, wireRecordToEvent } from "@uefn-devtools/protocol";
 import type { RuntimeTransport } from "./adapter.ts";
 import type { Clock } from "./clock.ts";
 import { AsyncQueue } from "./util.ts";
 
-/** `[2026.10.04-13.24.11:123][456]LogVerse: Warning: message` */
-const UE_LOG_LINE = /^\[[^\]]*\]\[\s*\d+\]([A-Za-z0-9_]+):\s(?:(Error|Warning|Display|Verbose|VeryVerbose|Log):\s)?(.*)$/;
+/**
+ * A UE log line, as seen in real UEFN 41.10 editor logs:
+ * `[2026.07.05-20.03.53:924][514]LogVerse: : CarUpgradeManager: Ready.` (Print, empty channel),
+ * `[...][ 25]LogVerse: Marketplace: Purchase successful` (log_channel),
+ * `[...]LogVerse: Warning: Devices_move_to_debug_log: MoveTo error: ...`.
+ * Groups: category, verbosity, Verse log channel, message.
+ */
+const UE_LOG_LINE =
+  /^\[[^\]]*\]\[\s*\d+\]([A-Za-z0-9_ ]+?):\s(?:(Error|Warning|Display|Verbose|VeryVerbose|Log):\s)?(?:([A-Za-z0-9_]*):\s)?(.*)$/;
+
+/**
+ * Match lifecycle markers the editor logs for a play-in-client session
+ * (verified in UEFN 41.10 logs). They give game start and end without any
+ * Verse instrumentation.
+ */
+const MINIGAME_STATE = /MinigameStateChanged: EFortMinigameState::(\w+)\s*$/;
 
 export interface LogTransportOptions {
   path: string;
@@ -30,6 +45,8 @@ export class LogFileTransport implements RuntimeTransport {
   private timer?: NodeJS.Timeout;
   private reading = false;
   private counter = 0;
+  private decoder = new StringDecoder("utf8");
+  private minigameState?: string;
   private readonly categories: Set<string>;
 
   constructor(private readonly options: LogTransportOptions) {
@@ -73,6 +90,7 @@ export class LogFileTransport implements RuntimeTransport {
         // Log was truncated or rotated by a new editor session.
         this.offset = 0;
         this.remainder = "";
+        this.decoder = new StringDecoder("utf8");
       }
       if (size === this.offset) return;
       const handle = await open(this.options.path, "r");
@@ -80,7 +98,8 @@ export class LogFileTransport implements RuntimeTransport {
         const buffer = Buffer.alloc(size - this.offset);
         await handle.read(buffer, 0, buffer.length, this.offset);
         this.offset = size;
-        const text = this.remainder + buffer.toString("utf8");
+        // The decoder holds back a multi-byte character split across reads.
+        const text = this.remainder + this.decoder.write(buffer);
         const lines = text.split(/\r?\n/);
         this.remainder = lines.pop() ?? "";
         for (const line of lines) this.ingest(line);
@@ -93,7 +112,8 @@ export class LogFileTransport implements RuntimeTransport {
   }
 
   /** Exposed for tests. */
-  ingest(line: string): void {
+  ingest(rawLine: string): void {
+    const line = rawLine.replace(/^\uFEFF/, "");
     const timestamp = this.options.clock.now();
     if (line.includes(WIRE_MARKER)) {
       try {
@@ -110,6 +130,11 @@ export class LogFileTransport implements RuntimeTransport {
       }
       return;
     }
+    const state = MINIGAME_STATE.exec(line)?.[1];
+    if (state) {
+      this.minigame(state, timestamp);
+      return;
+    }
     const match = UE_LOG_LINE.exec(line);
     if (!match || !this.categories.has(match[1]!)) return;
     this.queue.push({
@@ -117,7 +142,27 @@ export class LogFileTransport implements RuntimeTransport {
       timestamp,
       type: EventTypes.Log,
       source: { type: "system", id: match[1]! },
-      payload: { category: match[1], level: (match[2] ?? "Log").toLowerCase(), message: match[3] },
+      payload: {
+        category: match[1],
+        level: (match[2] ?? "Log").toLowerCase(),
+        ...(match[3] ? { channel: match[3] } : {}),
+        message: match[4],
+      },
+    });
+  }
+
+  /** InProgress starts the game; PostGameEnd ends it. Repeats of a state are ignored. */
+  private minigame(state: string, timestamp: number): void {
+    if (state === this.minigameState) return;
+    this.minigameState = state;
+    const type = state === "InProgress" ? EventTypes.GameStarted : state === "PostGameEnd" ? EventTypes.GameEnded : undefined;
+    if (!type) return;
+    this.queue.push({
+      id: `log_${++this.counter}`,
+      timestamp,
+      type,
+      source: { type: "system", id: "valkyrie" },
+      payload: { minigameState: state },
     });
   }
 }
