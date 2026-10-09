@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { TEST_FILE, walk } from "@uefn-devtools/core";
@@ -13,6 +14,13 @@ export async function findTestFiles(testsDir: string): Promise<string[]> {
   return walk(resolve(testsDir), (name) => TEST_FILE.test(name));
 }
 
+/**
+ * ES modules are cached for the life of the process, so importing a test file
+ * a second time registers nothing. Long-lived hosts (the daemon) load tests
+ * repeatedly: keep each file's definitions and re-import only when it changed.
+ */
+const loaded = new Map<string, { mtimeMs: number; tests: TestDefinition[] }>();
+
 /** Loads TypeScript tests through Node's type stripping and YAML tests through the schema. */
 export async function loadTests(files: readonly string[]): Promise<DiscoveryResult> {
   const tests: TestDefinition[] = [];
@@ -22,14 +30,25 @@ export async function loadTests(files: readonly string[]): Promise<DiscoveryResu
       if (/\.ya?ml$/.test(file)) {
         tests.push(...(await loadYamlTests(file)));
       } else {
+        const { mtimeMs } = await stat(file);
+        const cached = loaded.get(file);
+        if (cached && cached.mtimeMs === mtimeMs) {
+          tests.push(...cached.tests);
+          continue;
+        }
         const before = globalState.registry.length;
         globalState.loadingFile = file;
+        const url = pathToFileURL(file);
+        // A changed file gets a fresh module instance; the first load keeps the plain URL.
+        if (cached) url.search = `?mtime=${mtimeMs}`;
         try {
-          await import(pathToFileURL(file).href);
+          await import(url.href);
         } finally {
           globalState.loadingFile = undefined;
         }
-        tests.push(...globalState.registry.splice(before));
+        const defs = globalState.registry.splice(before);
+        loaded.set(file, { mtimeMs, tests: defs });
+        tests.push(...defs);
       }
     } catch (error) {
       errors.push({ file, message: (error as Error).message });
