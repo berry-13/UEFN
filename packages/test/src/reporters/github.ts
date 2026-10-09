@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import type { RunSummary, TestResult } from "@uefn-devtools/protocol";
@@ -92,11 +93,14 @@ export function renderAnnotations(summary: RunSummary, options: GithubOptions = 
 
 const MAX_LOGGED_ATTEMPTS = 5;
 
-/** Log output: a collapsible group per test, then the annotations. */
+/** Log output: a collapsible group per test (body inside stop-commands), then the annotations. */
 export function renderGithubLog(summary: RunSummary, options: GithubOptions = {}): string[] {
   const lines: string[] = [];
   for (const test of summary.tests) {
     lines.push(`::group::${escapeData(`${test.status === "passed" ? "PASS" : test.status === "skipped" ? "SKIP" : "FAIL"} ${test.name}`)}`);
+    // Everything free-form below is untrusted (error text, file names): stop command processing for it.
+    const token = randomUUID();
+    lines.push(`::stop-commands::${token}`);
     lines.push(`file: ${test.file}`);
     if (test.attempts.length > 1) lines.push(`reliability: ${percent(test.reliability)} (${test.passed}/${test.attempts.length})`);
     const failing = failingAttempts(test);
@@ -107,6 +111,7 @@ export function renderGithubLog(summary: RunSummary, options: GithubOptions = {}
     }
     if (failing.length > MAX_LOGGED_ATTEMPTS) lines.push(`... and ${failing.length - MAX_LOGGED_ATTEMPTS} more failing attempts`);
     for (const c of test.correlations) lines.push(`correlation: ${c.description}`);
+    lines.push(`::${token}::`);
     lines.push("::endgroup::");
   }
   lines.push(...renderAnnotations(summary, options));
