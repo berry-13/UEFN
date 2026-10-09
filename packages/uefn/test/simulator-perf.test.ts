@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SimulatedConfig, type RuntimeEvent } from "@uefn-devtools/protocol";
-import { SimulatedWorld } from "@uefn-devtools/uefn";
+import { SimulatedAdapter, SimulatedWorld } from "@uefn-devtools/uefn";
 
 function run(seed: number, profiling?: { enabled: boolean; sample_every_ticks: number }): RuntimeEvent[] {
   const config = SimulatedConfig.parse({
@@ -52,4 +52,22 @@ test("profiling can be disabled and does not change gameplay events", () => {
   const gameplay = (events: RuntimeEvent[]) =>
     events.filter((e) => !e.type.startsWith("perf.")).map((e) => [e.type, e.payload]);
   assert.deepEqual(gameplay(off), gameplay(run(7)));
+});
+
+test("a very fast simulated clock does not starve the event loop", async () => {
+  const config = SimulatedConfig.parse({ seed: 1, tick_ms: 1, time_scale: 5000, boot_ms: 1, devices: [{ id: "A", capture_time_ms: 1000, score: 50 }] });
+  const adapter = new SimulatedAdapter({ config, verseDir: "." });
+  await adapter.startSession();
+  const transport = adapter.transport();
+  await transport.start();
+  let beats = 0;
+  const heartbeat = setInterval(() => beats++, 20);
+  const started = performance.now();
+  await new Promise((r) => setTimeout(r, 1000));
+  const stopping = performance.now();
+  await adapter.stopSession();
+  clearInterval(heartbeat);
+  assert.ok(beats >= 10, `event loop heartbeats: ${beats}`);
+  assert.ok(performance.now() - stopping < 1000, "session stops promptly");
+  assert.ok(stopping - started < 3000);
 });
