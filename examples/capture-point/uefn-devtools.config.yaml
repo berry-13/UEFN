@@ -35,6 +35,7 @@ mcp:
   #   session_state: ValkyrieToolset.SessionToolset/GetSessionStatus
   #   start_game: ValkyrieToolset.SessionToolset/StartGame
   #   end_game: ValkyrieToolset.SessionToolset/StopGame
+  #   game_state: ValkyrieToolset.SessionToolset/GetGameState
 
 runtime:
   # log_path: C:/Users/<you>/AppData/Local/UnrealEditorFortnite/Saved/Logs/UnrealEditorFortnite.log

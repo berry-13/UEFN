@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type {
+  CommandResult,
   CompileResult,
   DevToolsConfig,
   GameState,
@@ -238,10 +239,11 @@ export class DevToolsEngine {
   }
 
   /** Sends a command to the runtime; throws {@link CommandError} on failure. */
-  async command(command: RuntimeCommand): Promise<void> {
+  async command(command: RuntimeCommand): Promise<CommandResult> {
     if (!this.currentSession) throw new CommandError("no active session", false);
     const result = await this.adapter.transport().command(command);
     if (!result.ok) throw new CommandError(result.error ?? `${command.type} failed`, result.unsupported === true);
+    return result;
   }
 
   supportsCommand(type: RuntimeCommand["type"]): boolean {

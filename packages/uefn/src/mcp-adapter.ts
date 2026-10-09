@@ -101,6 +101,11 @@ export class McpUefnAdapter implements UEFNAdapter {
 
   /** Runs a mapped game command; used by {@link McpCommandTransport}. */
   async gameCommand(key: "start_game" | "end_game"): Promise<CommandResult> {
+    // UEFN auto-starts the match on launch by default, and refuses StartGame
+    // while one runs ("not in a startable state"); seen live on 42.30. With
+    // game_state mapped, a match already in the wanted state is success.
+    const running = await this.gameRunning();
+    if ((key === "start_game" && running === true) || (key === "end_game" && running === false)) return { ok: true, noop: true };
     const out = await this.call(key);
     return out.isError ? { ok: false, error: out.text || `${key} failed` } : { ok: true };
   }
@@ -126,6 +131,19 @@ export class McpUefnAdapter implements UEFNAdapter {
     const toolKey = keys.find((k) => /tool/i.test(k) && !/toolset/i.test(k)) ?? keys.find((k) => /^name$/i.test(k)) ?? "tool_name";
     const argsKey = keys.find((k) => /arg|param|input/i.test(k)) ?? "arguments";
     return { name: "call_tool", arguments: { [toolsetKey]: toolset, [toolKey]: tool, [argsKey]: args } };
+  }
+
+  /** True / false from the mapped game_state tool; undefined when unmapped or unknown. */
+  private async gameRunning(): Promise<boolean | undefined> {
+    const name = this.options.mcp.tools.game_state;
+    if (!name || !this.hasTool(name)) return undefined;
+    const out = await this.call("game_state").catch(() => undefined);
+    if (!out || out.isError) return undefined;
+    const value = isRecord(out.json) ? out.json["returnValue"] : out.json;
+    const raw = String(typeof value === "string" ? value : out.text).toLowerCase();
+    if (raw.includes("running")) return true;
+    if (raw.includes("canstart") || raw.includes("unconnected")) return false;
+    return undefined;
   }
 
   private async call(key: ToolKey, args: Record<string, unknown> = {}): Promise<ToolOutput> {

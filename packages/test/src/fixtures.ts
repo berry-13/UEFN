@@ -1,4 +1,4 @@
-import type { DeviceState, GameState, PlayerState, RuntimeCommand, RuntimeEvent, TeamState, Vector3 } from "@uefn-devtools/protocol";
+import type { CommandResult, DeviceState, GameState, PlayerState, RuntimeCommand, RuntimeEvent, TeamState, Vector3 } from "@uefn-devtools/protocol";
 import { CommandError, type DevToolsEngine, type EventQuery } from "@uefn-devtools/core";
 import { parseDuration } from "@uefn-devtools/protocol";
 import { currentContext, type TestContext } from "./context.ts";
@@ -9,9 +9,9 @@ export const HANDLE = Symbol.for("uefn-devtools.handle");
 
 export type Duration = number | string;
 
-async function send(ctx: TestContext, command: RuntimeCommand): Promise<void> {
+async function send(ctx: TestContext, command: RuntimeCommand): Promise<CommandResult> {
   try {
-    await ctx.engine.command(command);
+    return await ctx.engine.command(command);
   } catch (error) {
     if (error instanceof CommandError && error.unsupported) {
       throw new Error(
@@ -211,7 +211,9 @@ export class GameFixture {
   async start(): Promise<void> {
     await this.ctx.step("Game started", async () => {
       const from = this.ctx.engine.events.mark();
-      await send(this.ctx, { type: "start_game" });
+      const result = await send(this.ctx, { type: "start_game" });
+      // A match that was already running (UEFN starts one on launch) emits no new event.
+      if (result.noop) return;
       await this.ctx.engine.waitForEvent({ type: "game.started" }, { timeoutMs: this.ctx.expectTimeout, fromIndex: from });
     });
   }

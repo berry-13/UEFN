@@ -1,0 +1,19 @@
+name: POC-001 probe counts up
+id: poc-001
+timeout: 120s
+setup:
+  - start_game
+steps:
+  - wait_for:
+      event: probe.updated
+      match:
+        probe: poc.counter
+        value: 10
+      timeout: 60s
+assert:
+  - event:
+      type: probe.updated
+      match:
+        probe: poc.counter
+        value: 10
+      times: 1

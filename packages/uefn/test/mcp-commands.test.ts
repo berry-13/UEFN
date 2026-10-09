@@ -126,3 +126,49 @@ test("toolset/tool mappings route through call_tool on a meta-tool server", asyn
     await adapter.disconnect();
   }
 });
+
+test("start_game is a no-op when the match already runs (UEFN auto-start)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-mcp-running-"));
+  const calls = join(dir, "calls.txt");
+  const script = join(dir, "running.mjs");
+  const mcp = import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js");
+  const stdio = import.meta.resolve("@modelcontextprotocol/sdk/server/stdio.js");
+  await writeFile(
+    script,
+    `import { McpServer } from ${JSON.stringify(mcp)};
+import { StdioServerTransport } from ${JSON.stringify(stdio)};
+import { appendFileSync } from "node:fs";
+const server = new McpServer({ name: "fake-uefn-running", version: "0" });
+const reply = { StartSession: "null", StartGame: '"refused"', StopGame: "null", GetGameState: '"Running"' };
+for (const [name, value] of Object.entries(reply)) {
+  server.registerTool(name, { description: name }, async () => {
+    appendFileSync(${JSON.stringify(calls)}, name + "\\n");
+    return { content: [{ type: "text", text: '{"returnValue":' + value + "}" }], isError: name === "StartGame" };
+  });
+}
+await server.connect(new StdioServerTransport());
+`,
+  );
+  await writeFile(calls, "");
+  const log = join(dir, "UnrealEditorFortnite.log");
+  await writeFile(log, "");
+  const adapter = new McpUefnAdapter({
+    mcp: McpAdapterConfig.parse({
+      command: process.execPath,
+      args: [script],
+      tools: { start_session: "StartSession", start_game: "StartGame", end_game: "StopGame", game_state: "GetGameState" },
+      timeout_ms: 20_000,
+    }),
+    logPath: log,
+  });
+  try {
+    await adapter.connect();
+    await adapter.startSession();
+    assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true, noop: true });
+    assert.deepEqual(await adapter.transport().command({ type: "end_game" }), { ok: true });
+    // StartGame was never sent; StopGame was, because the match was running.
+    assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), ["StartSession", "GetGameState", "GetGameState", "StopGame"]);
+  } finally {
+    await adapter.disconnect();
+  }
+});

@@ -50,17 +50,16 @@ Duration: 0.83s
 | MCP server (21 tools, permission modes, audit log) | working |
 | Simulated adapter: deterministic capture-point world with fault injection and perf samples | working |
 | Log transport and compile-diagnostics parser | tested against real UEFN 41.10 editor logs; game start/end derived from the log |
-| UEFN MCP adapter (compile, sessions, `StartGame`/`StopGame`) | driven live on UEFN 42.30: discovery, compile with diagnostics, session status; **session launch and match start not yet run live** ([evidence](docs/evidence/uefn-42.30-live.md)) |
-| Verse runtime emitter (`runtime/verse`) | compiles on UEFN 42.30; log output in a live session **not yet observed** |
+| UEFN MCP adapter (compile, sessions, match start/stop) | POC-001 passes against a live UEFN 42.30 session ([evidence](docs/evidence/uefn-42.30-live.md)) |
+| Verse runtime emitter (`runtime/verse`) | works in a live UEFN 42.30 session (`Hello` and probes reach the log) |
 
 Everything runs today against the **simulated adapter**. That covers
-developing the engine, test API and agent loop. The real-UEFN path has
-been checked against real editor logs and the shipped UEFN 42.30 binaries,
-but no live session has been driven yet.
-[`docs/capabilities.md`](docs/capabilities.md) lists the evidence, what is
-left to check, and how: UEFN 42.30 ships an MCP server that covers compile,
-sessions and match start/stop, while player actions still have no external
-channel.
+developing the engine, test API and agent loop. The same tests run
+against real UEFN 42.30 through its MCP server: POC-001 (compile, launch,
+detect the runtime, start and stop the match, observe and assert a Verse
+value) passes live. [`docs/capabilities.md`](docs/capabilities.md) has the
+evidence; the open gap is player actions (teleport, damage), which have no
+external channel yet.
 
 ## Quick start
 

@@ -92,7 +92,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 }
 
 const REQUIRED_TOOLS = ["compile", "start_session"] as const;
-const OPTIONAL_TOOLS = ["project_info", "stop_session", "session_state"] as const;
+const OPTIONAL_TOOLS = ["project_info", "stop_session", "session_state", "start_game", "end_game", "game_state"] as const;
 
 /**
  * Environment and project health checks. Pass an engine or loaded config,

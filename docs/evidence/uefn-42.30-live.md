@@ -37,7 +37,8 @@ With the setting on, `list_toolsets` includes `ValkyrieToolset.SessionToolset`,
 | stop_session | `ValkyrieToolset.SessionToolset/StopSession` |
 | session_state | `ValkyrieToolset.SessionToolset/GetSessionStatus` → `{"returnValue":"Disconnected"}` |
 | start_game / end_game | `ValkyrieToolset.SessionToolset/StartGame` / `StopGame` |
-| (not mapped yet) | `GetGameState`, `PushChanges(bVerseOnly)`, `GetClientLogEntries(pattern, maxResults)` |
+| game_state | `ValkyrieToolset.SessionToolset/GetGameState` → `Unconnected` / `CanStart` / `Running` |
+| (not mapped yet) | `PushChanges(bVerseOnly)`, `GetClientLogEntries(pattern, maxResults)` |
 
 ## Results
 
@@ -48,7 +49,29 @@ With the setting on, `list_toolsets` includes `ValkyrieToolset.SessionToolset`,
 | Compile errors | ✅ BuildAll returns `{severity:"Error", code:3588, message, filePath, span:{startLine,...}}` (0-indexed); DevTools reported these as success before this run, now fixed |
 | Place a Verse device in the level | ✅ `DeviceToolset/PlaceDevice` with the catalog `assetPath` from `ListDeviceAssets` |
 | Session status | ✅ `Disconnected` read correctly (was mistaken for connected before this run, now fixed) |
-| Launch session, start game, observe probe | ☐ not run yet (needs the Fortnite client) |
+| Launch session | ✅ `StartSession` uploads, cooks and launches the Fortnite client; `uefn test` reached "Connected." |
+| Runtime ready | ✅ the device's `Hello` arrived in the editor log and became `session.ready` |
+| Observe a Verse value | ✅ `poc.counter` probes, one per second |
+| Start game | ✅ UEFN auto-starts the match on launch and refuses `StartGame` while it runs ("The match is not in a startable state"); with `game_state` mapped, DevTools treats an already running match as started |
+| Controlled action, value change | ✅ `poc-restart`: `StopGame` → `PostGameEnd`, `StartGame` → `InProgress`; the device restarted (new `Hello`, counter back to 1) |
+| Assert, PASS/FAIL | ✅ `uefn test poc-001` PASS (counter reached 10, 28.3s); `uefn test poc-restart` PASS (28.5s) |
+
+Wire lines as they appear in the editor log (the Verse log channel is
+module-prefixed):
+
+```
+LogVerse: DevTools-devtools_log: [UEFN-DEVTOOLS]|1|H|0|0.1.0
+LogVerse: DevTools-devtools_log: [UEFN-DEVTOOLS]|1|P|1|poc.counter|v:i=1
+LogValkyrieBeacon: [3974] (ValkyrieBeaconClient_3) MinigameStateChanged: EFortMinigameState::InProgress
+LogVerse: DevTools-devtools_log: [UEFN-DEVTOOLS]|1|P|2|poc.counter|v:i=2
+LogValkyrieBeacon: [3974] (ValkyrieBeaconClient_3) MinigameStateChanged: EFortMinigameState::PostGameEnd
+```
+
+Fixed along the way, each found only against the live editor: compile errors
+read as a clean build, `Disconnected` read as connected, a Windows exit crash
+(libuv assertion), `StartGame` failing on an auto-started match, and
+`game.start()` waiting for an event that had already happened. The files used
+are in [`examples/uefn-live`](../../examples/uefn-live).
 
 Also found: a folder named `DevTools` under `Content/` becomes a Verse module,
 so a field named `DevTools` in a device beside it is ambiguous (error 3588).

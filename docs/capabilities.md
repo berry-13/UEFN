@@ -12,11 +12,12 @@ classified as:
 | **BLOCKED** | Not possible under current UEFN APIs |
 | **UNKNOWN** | Not investigated yet |
 
-> **Status (2026-10-09).** DevTools has driven a live UEFN 42.30 editor
-> over its MCP server: tool discovery, Verse compile with diagnostics, device
-> placement and session status are verified
-> ([evidence](evidence/uefn-42.30-live.md)). Launching a play session,
-> starting the match and reading a probe have not run live yet. Evidence so far comes from the UEFN install on the development machine:
+> **Status (2026-10-09).** POC-001 passes against a live UEFN 42.30 session,
+> driven entirely by DevTools over UEFN's MCP server: compile, session
+> launch, runtime detection, match stop/start, probe observation and
+> assertion ([evidence](evidence/uefn-42.30-live.md),
+> [files](../examples/uefn-live)). Player actions (teleport, damage) still
+> have no external channel. Evidence so far comes from the UEFN install on the development machine:
 > real editor logs from UEFN 41.10 (July 2026), which the log transport and
 > the compile-diagnostics parser are now tested against, and strings in the
 > UEFN 42.30 binaries, which show an official MCP server with session and
@@ -67,14 +68,14 @@ classified as:
 | Project info | DIRECT? | UEFN MCP tool → `mcp.tools.project_info`; no project-info tool identified, VerseToolset file listing is the closest | | ☐ |
 | Compile Verse | DIRECT | `ValkyrieToolset.VerseToolset/BuildAll` → `mcp.tools.compile` | live (42.30) | ✅ |
 | Compile diagnostics | DIRECT / DERIVED | structured `{severity, code, message, file, span}` (severities `Error`/`Warning`/`Information`/`Hint`, 0-indexed spans); fallback parses `VerseBuild: Error: <file>.verse(l,c, l2,c2): Script error <code>: <msg>`, de-duplicated | live (42.30): `{returnValue:[{severity, code, message, filePath, span}]}`, parser tested on it; log format real (41.10) | ✅ |
-| Launch session | DIRECT | `ValkyrieToolset.SessionToolset/StartSession` → `mcp.tools.start_session` | tool listed live (42.30); launch not run yet | ☐ |
+| Launch session | DIRECT | `ValkyrieToolset.SessionToolset/StartSession` → `mcp.tools.start_session` (uploads, cooks, launches the client) | live (42.30) | ✅ |
 | Session status | DIRECT / DERIVED | `GetSessionStatus` → `{"returnValue":"Disconnected"}` (also `Connecting`/`Connected`/`Reconnecting`/`UpdatingContent`); `GetGameState` not mapped yet | live (42.30) | ✅ (Disconnected only) |
-| Game start / end detection | DERIVED | log transport maps `MinigameStateChanged: EFortMinigameState::InProgress` → `game.started`, `::PostGameEnd` → `game.ended` | real logs (41.10), tested on ~117k lines | ✅ (log replay; not live) |
-| Game start / end commands | DIRECT | SessionToolset `StartGame` / `StopGame` → `mcp.tools.start_game` / `end_game`, sent through the session transport | binary (42.30); adapter tested against a stdio MCP server | ☐ |
-| Detect runtime ready | INSTRUMENTED | `devtools_emitter.Hello()` → `session.ready` | | ☐ |
-| Structured logs | DERIVED | tail the editor log; `LogVerse` lines → `log` events with `level`, `channel` and `message` | real logs (41.10): Print, `log_channel` and warning shapes, BOM, CRLF | ✅ (log replay; not live) |
-| Gameplay events | INSTRUMENTED | `devtools_emitter.Emit` → log → `RuntimeEvent` | wire records parse inside real LogVerse line shapes | ☐ |
-| Probes (runtime values) | INSTRUMENTED | `devtools_emitter.Probe*` → `probe.updated` | as above | ☐ |
+| Game start / end detection | DERIVED | log transport maps `MinigameStateChanged: EFortMinigameState::InProgress` → `game.started`, `::PostGameEnd` → `game.ended` | live (42.30) and real logs (41.10) | ✅ |
+| Game start / end commands | DIRECT | `SessionToolset/StartGame` / `StopGame` → `mcp.tools.start_game` / `end_game`; `GetGameState` → `mcp.tools.game_state` makes them idempotent (UEFN auto-starts the match) | live (42.30) | ✅ |
+| Detect runtime ready | INSTRUMENTED | `devtools_emitter.Hello()` → `session.ready` | live (42.30) | ✅ |
+| Structured logs | DERIVED | tail the editor log; `LogVerse` lines → `log` events with `level`, `channel` and `message` | live (42.30) and real logs (41.10) | ✅ |
+| Gameplay events | INSTRUMENTED | `devtools_emitter.Emit` → log → `RuntimeEvent` | same path as probes, live (42.30); `Emit` itself not exercised live | ☐ |
+| Probes (runtime values) | INSTRUMENTED | `devtools_emitter.Probe*` → `probe.updated` | live (42.30): `ProbeInt` | ✅ |
 | Event causality | INSTRUMENTED | `DevToolsParent(seq)` / `DevToolsTrace(id)` fields | | ☐ |
 | Player state (health, team…) | INSTRUMENTED | Verse reads `fort_character` and emits | | ☐ |
 | Device state | INSTRUMENTED | Verse subscribes to device events and emits | | ☐ |
@@ -117,11 +118,11 @@ and the agent loop can be developed in the meantime.
 |---|---|---|---|
 | 1 | Connect to UEFN | ✅ | ✅ live 42.30 MCP server, meta-tool mode |
 | 2 | Compile Verse | ✅ (no-op) | ✅ `VerseToolset/BuildAll`, including the DevTools runtime; errors reported |
-| 3 | Launch session | ✅ | ☐ `mcp.tools.start_session` (SessionToolset) |
-| 4 | Detect Fortnite ready | ✅ | ☐ `Hello()` + `runtime.log_path`; match start also derived from the log |
-| 5 | Start game | ✅ | ☐ `mcp.tools.start_game` (SessionToolset `StartGame`) |
-| 6 | Observe one Verse value | ✅ | ☐ `ProbeInt` |
-| 7 | Trigger one controlled action | ✅ | ☐ command gap |
-| 8 | Observe value change | ✅ | ☐ |
-| 9 | Assert expected value | ✅ | ✅ (engine is transport-agnostic) |
+| 3 | Launch session | ✅ | ✅ `SessionToolset/StartSession` |
+| 4 | Detect Fortnite ready | ✅ | ✅ `Hello()` reached the editor log → `session.ready` |
+| 5 | Start game | ✅ | ✅ auto-started match detected through `GetGameState`; `StartGame` used in step 7 |
+| 6 | Observe one Verse value | ✅ | ✅ `ProbeInt("poc.counter")` |
+| 7 | Trigger one controlled action | ✅ | ✅ `StopGame` then `StartGame` (match restart); player actions still need a scenario device |
+| 8 | Observe value change | ✅ | ✅ the device restarted: new `Hello`, counter back to 1 |
+| 9 | Assert expected value | ✅ | ✅ `poc.counter` reached 10 |
 | 10 | Return PASS/FAIL | ✅ | ✅ |
