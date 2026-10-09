@@ -2,6 +2,7 @@ import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CONFIG_FILE } from "@uefn-devtools/core";
 import type { Command } from "../shared.ts";
+import { initGithubWorkflow } from "./github-workflow.ts";
 
 const STARTER_CONFIG = `# UEFN DevTools configuration
 project:
@@ -40,9 +41,12 @@ mcp_server:
 
 export const init: Command = {
   name: "init",
-  usage: "init",
-  summary: `Write a starter ${CONFIG_FILE}`,
-  async run() {
+  usage: "init [--github]",
+  summary: `Write a starter ${CONFIG_FILE} (--github: a CI workflow instead)`,
+  options: { github: { type: "boolean" } },
+  optionHelp: ["--github               Write .github/workflows/uefn-devtools.yml"],
+  async run(values) {
+    if (values.github) return initGithubWorkflow(process.cwd());
     const path = join(process.cwd(), CONFIG_FILE);
     if (await stat(path).then(() => true, () => false)) {
       console.error(`${CONFIG_FILE} already exists`);

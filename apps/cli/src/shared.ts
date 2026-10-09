@@ -2,7 +2,7 @@ import type { ParseArgsOptionsConfig } from "node:util";
 import { DevToolsEngine } from "@uefn-devtools/core";
 
 /** Parsed option values; every command reads the subset it declared. */
-export type Values = Record<string, string | boolean | undefined>;
+export type Values = Record<string, string | boolean | string[] | undefined>;
 
 export class UsageError extends Error {}
 
@@ -45,4 +45,10 @@ export async function openEngine(values: Values): Promise<DevToolsEngine> {
 export function print(values: Values, data: unknown, human: () => void): void {
   if (values.json) process.stdout.write(JSON.stringify(data, null, 2) + "\n");
   else human();
+}
+
+/** Values of a `multiple: true` option. */
+export function list(values: Values, name: string): string[] | undefined {
+  const v = values[name];
+  return Array.isArray(v) ? v : undefined;
 }

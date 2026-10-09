@@ -12,6 +12,7 @@ export {
 export type { TestDefinition, TestBody, TestFixtures, TestOptions } from "./context.ts";
 export { runTests, type RunOptions, type RunnerEvent } from "./runner.ts";
 export { consoleReporter, type ReporterOptions } from "./reporter.ts";
+export * from "./reporters/index.ts";
 export { loadTests, findTestFiles, filterTests } from "./discover.ts";
 export { loadYamlTests, YamlTestSchema } from "./yaml.ts";
 export { correlateFailures } from "./correlate.ts";
