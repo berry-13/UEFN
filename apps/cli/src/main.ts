@@ -14,7 +14,7 @@ const GLOBAL_OPTIONS: ParseArgsOptionsConfig = {
 function help(): string {
   const width = Math.max(...commands.map((c) => c.usage.length)) + 3;
   const lines = [
-    "uefn — UEFN DevTools",
+    "uefn: UEFN DevTools",
     "",
     "Usage: uefn <command> [options]",
     "",
