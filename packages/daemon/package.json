@@ -1,0 +1,19 @@
+{
+  "name": "@uefn-devtools/daemon",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {"@uefn-devtools/protocol": "workspace:*", "@uefn-devtools/core": "workspace:*", "@uefn-devtools/test": "workspace:*", "zod": "^4.3.6"}
+}
