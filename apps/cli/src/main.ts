@@ -5,8 +5,10 @@ import { readFile, writeFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { CONFIG_FILE, DevToolsEngine, EventStore, captureGitInfo, formatCausalTree } from "@uefn-devtools/core";
+import { cmdCiComment } from "./commands/ci.ts";
+import { initGithubWorkflow } from "./commands/github-workflow.ts";
 import { RuntimeEvent } from "@uefn-devtools/protocol";
-import { consoleReporter, runTests } from "@uefn-devtools/test";
+import { createReporters, runTests } from "@uefn-devtools/test";
 
 const HELP = `uefn — UEFN DevTools
 
@@ -19,7 +21,8 @@ Commands
   test [filter]          Compile, start/reuse a session, run tests, assert
   trace <event-id>       Causal tree of an event from a recorded events.jsonl
   mcp                    Serve the DevTools MCP server over stdio
-  init                   Write a starter ${CONFIG_FILE}
+  init [--github]        Write a starter ${CONFIG_FILE} (--github: also a CI workflow)
+  ci comment             Render the Markdown summary of a saved summary.json
 
 Global options
   --adapter <name>       simulated | mcp (overrides config)
@@ -33,6 +36,12 @@ test options
   --no-compile           Skip the Verse build stage
   --watch                Re-run when Verse or test files change
   --verbose              Print every iteration with --repeat
+  --reporter <name>      console | json | junit | github (repeat or comma-separate;
+                         github is added automatically when GITHUB_ACTIONS=true)
+  --output <file>        junit/json output file (default .devtools/results/junit.xml)
+
+ci comment options
+  --from <summary.json>  Saved run summary (from .devtools/results/...)
 
 trace options
   --file <events.jsonl>  Recorded events (from .devtools/results/...)
@@ -53,6 +62,10 @@ type Values = {
   verbose?: boolean;
   file?: string;
   mode?: string;
+  reporter?: string[];
+  output?: string;
+  github?: boolean;
+  from?: string;
   help?: boolean;
 };
 
@@ -72,6 +85,10 @@ function parse(argv: string[]): { command?: string; positionals: string[]; value
       verbose: { type: "boolean" },
       file: { type: "string" },
       mode: { type: "string" },
+      reporter: { type: "string", multiple: true },
+      output: { type: "string" },
+      github: { type: "boolean" },
+      from: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -178,7 +195,16 @@ async function cmdTest(values: Values, positionals: string[]): Promise<number> {
       ...(seed !== undefined ? { seed } : {}),
       ...(retries !== undefined ? { retries } : {}),
       skipBuild: values["no-compile"] === true,
-      ...(values.json ? {} : { onEvent: consoleReporter({ verbose: values.verbose === true }) }),
+      ...(values.json && !values.reporter?.length
+        ? {}
+        : {
+            onEvent: createReporters({
+              ...(values.reporter ? { reporters: values.reporter } : {}),
+              ...(values.output ? { output: values.output } : {}),
+              root: engine.root,
+              verbose: values.verbose === true,
+            }),
+          }),
     });
     if (values.json) process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
     return summary.status === "passed" ? 0 : summary.status === "failed" ? 1 : 2;
@@ -295,7 +321,8 @@ mcp_server:
   mode: development
 `;
 
-async function cmdInit(): Promise<number> {
+async function cmdInit(values: Values): Promise<number> {
+  if (values.github) return initGithubWorkflow(process.cwd());
   const path = join(process.cwd(), CONFIG_FILE);
   if (await stat(path).then(() => true, () => false)) {
     console.error(`${CONFIG_FILE} already exists`);
@@ -326,7 +353,10 @@ async function main(): Promise<number> {
     case "mcp":
       return cmdMcp(values);
     case "init":
-      return cmdInit();
+      return cmdInit(values);
+    case "ci":
+      if (positionals[0] !== "comment") throw new UsageError("usage: uefn ci comment --from <summary.json>");
+      return cmdCiComment(values.from);
     default:
       throw new UsageError(`unknown command '${command}'\n\n${HELP}`);
   }
