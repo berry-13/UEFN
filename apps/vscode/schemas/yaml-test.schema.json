@@ -1,0 +1,826 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "timeout": {
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "skip": {
+      "type": "boolean"
+    },
+    "setup": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "start_game",
+              "end_game"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "start_game": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "start_game"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "end_game": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "end_game"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "spawn_player": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "team": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "required": [
+              "spawn_player"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "teleport": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "location": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "player",
+                  "location"
+                ]
+              }
+            },
+            "required": [
+              "teleport"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "enter": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "area": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "player",
+                  "area"
+                ]
+              }
+            },
+            "required": [
+              "enter"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "leave": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "area": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "player",
+                  "area"
+                ]
+              }
+            },
+            "required": [
+              "leave"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "eliminate": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "by": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "player"
+                ]
+              }
+            },
+            "required": [
+              "eliminate"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "damage": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "amount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "player",
+                  "amount"
+                ]
+              }
+            },
+            "required": [
+              "damage"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "enable_device": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "required": [
+              "enable_device"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "disable_device": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "required": [
+              "disable_device"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "wait": {
+                "type": [
+                  "number",
+                  "string"
+                ]
+              }
+            },
+            "required": [
+              "wait"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "wait_for": {
+                "type": "object",
+                "properties": {
+                  "event": {
+                    "type": "string"
+                  },
+                  "match": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "timeout": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                },
+                "required": [
+                  "event"
+                ]
+              }
+            },
+            "required": [
+              "wait_for"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "steps": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "start_game",
+              "end_game"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "start_game": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "start_game"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "end_game": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "end_game"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "spawn_player": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "team": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "required": [
+              "spawn_player"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "teleport": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "location": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "player",
+                  "location"
+                ]
+              }
+            },
+            "required": [
+              "teleport"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "enter": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "area": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "player",
+                  "area"
+                ]
+              }
+            },
+            "required": [
+              "enter"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "leave": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "area": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "player",
+                  "area"
+                ]
+              }
+            },
+            "required": [
+              "leave"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "eliminate": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "by": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "player"
+                ]
+              }
+            },
+            "required": [
+              "eliminate"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "damage": {
+                "type": "object",
+                "properties": {
+                  "player": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "amount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "player",
+                  "amount"
+                ]
+              }
+            },
+            "required": [
+              "damage"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "enable_device": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "required": [
+              "enable_device"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "disable_device": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "required": [
+              "disable_device"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "wait": {
+                "type": [
+                  "number",
+                  "string"
+                ]
+              }
+            },
+            "required": [
+              "wait"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "wait_for": {
+                "type": "object",
+                "properties": {
+                  "event": {
+                    "type": "string"
+                  },
+                  "match": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "timeout": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                },
+                "required": [
+                  "event"
+                ]
+              }
+            },
+            "required": [
+              "wait_for"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "assert": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "device": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "owner": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "trigger_count": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "required": [
+              "device"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "team": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "score": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "score"
+                ]
+              }
+            },
+            "required": [
+              "team"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "player": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "health": {
+                    "type": "number"
+                  },
+                  "shield": {
+                    "type": "number"
+                  },
+                  "alive": {
+                    "type": "boolean"
+                  },
+                  "team": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "in_area": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "required": [
+              "player"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "match": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "times": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "probe": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "value": {}
+                },
+                "required": [
+                  "id",
+                  "value"
+                ]
+              }
+            },
+            "required": [
+              "probe"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "snapshot": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "include": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "devices",
+                            "teams",
+                            "players",
+                            "probes",
+                            "positions"
+                          ]
+                        }
+                      },
+                      "ignore": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "snapshot"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "title": "UEFN DevTools YAML test",
+  "description": "One test per YAML document (separate several tests with ---). See docs/tests.md."
+}
