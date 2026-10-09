@@ -118,6 +118,12 @@ export function runCli(cli: CliCommand, args: string[], options: CliRunOptions):
     });
     const onAbort = () => {
       cancelled = true;
+      const taskkill = killCommand(process.platform, child.pid);
+      if (taskkill) {
+        // The child is a shell wrapper on Windows; kill the whole tree.
+        spawn(taskkill.command, taskkill.args, { windowsHide: true, stdio: "ignore" }).on("error", () => child.kill());
+        return;
+      }
       child.kill("SIGTERM");
       setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
@@ -137,15 +143,28 @@ export function runCli(cli: CliCommand, args: string[], options: CliRunOptions):
   });
 }
 
-/** Parses the JSON document the CLI printed with `--json`; undefined when stdout is not JSON. */
+/** On Windows the child is usually cmd.exe, so cancelling needs `taskkill /T` to reach the tree; elsewhere a plain signal does. */
+export function killCommand(platform: NodeJS.Platform, pid: number | undefined): { command: string; args: string[] } | undefined {
+  if (platform !== "win32" || pid === undefined) return undefined;
+  return { command: "taskkill", args: ["/pid", String(pid), "/T", "/F"] };
+}
+
+/**
+ * Parses the JSON summary the CLI printed with `--json`. Tests may print their
+ * own output first, so this takes the last top-level document: the pretty
+ * printed summary starts with `{` alone at column 0 and is the final output.
+ */
 export function parseJsonOutput<T>(stdout: string): T | undefined {
-  const start = stdout.indexOf("{");
-  if (start === -1) return undefined;
-  try {
-    return JSON.parse(stdout.slice(start)) as T;
-  } catch {
-    return undefined;
+  const lines = stdout.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]!.startsWith("{")) continue;
+    try {
+      return JSON.parse(lines.slice(i).join("\n")) as T;
+    } catch {
+      // Not the start of the summary (a logged object); keep scanning upwards.
+    }
   }
+  return undefined;
 }
 
 /** One-line description of a failed CLI call, for notifications. */
