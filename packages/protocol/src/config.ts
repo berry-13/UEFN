@@ -30,6 +30,16 @@ export const SimulatedConfig = z.object({
     })
     .default({ double_award_probability: 0 }),
   seed: z.number().int().default(1),
+  /**
+   * Synthetic `perf.sample` / `perf.span` events. Values derive from world
+   * state and a seeded RNG (never the wall clock), so runs stay deterministic.
+   */
+  profiling: z
+    .object({
+      enabled: z.boolean().default(true),
+      sample_every_ticks: z.number().int().positive().default(10),
+    })
+    .default({ enabled: true, sample_every_ticks: 10 }),
 });
 export type SimulatedConfig = z.infer<typeof SimulatedConfig>;
 

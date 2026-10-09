@@ -16,6 +16,7 @@
 # therefore event ids and parent links, are unique.
 
 using { /UnrealEngine.com/Temporary/Diagnostics }
+using { /Verse.org/Simulation }
 
 devtools_log<public> := class(log_channel){}
 
@@ -92,3 +93,35 @@ devtools_emitter<public> := class:
     ProbeString<public>(ProbeId:string, Value:string)<transacts>:void =
         set NextSeq += 1
         Logger.Print("[UEFN-DEVTOOLS]|1|P|{NextSeq}|" + DevToolsEscape(ProbeId) + "|v=" + DevToolsEscape(Value))
+
+    # Profiling (docs/profiler.md). UNVERIFIED like the rest of this file.
+    #
+    # Time source is GetSimulationElapsedTime (seconds of simulation time).
+    # Simulation time advances per frame, so a span that begins and ends
+    # inside one synchronous handler will usually read 0 ms: spans measure
+    # work that suspends (Sleep, Await, Race) across frames, not CPU cost.
+
+    # Simulation time in milliseconds, for ProfileBegin / ProfileEnd.
+    ProfileNow<public>()<transacts>:float =
+        GetSimulationElapsedTime() * 1000.0
+
+    # Starts a span; pass the returned start time to ProfileEnd.
+    ProfileBegin<public>()<transacts>:float =
+        ProfileNow()
+
+    # Ends a span started with ProfileBegin and emits it as perf.span.
+    # Fields may carry DevToolsParent(Seq) to attach the span to the event
+    # whose handler it measured. Returns the span's sequence number.
+    ProfileEnd<public>(Name:string, StartMs:float, Fields:[]string)<transacts>:int =
+        ProfileSpan(Name, ProfileNow() - StartMs, Fields)
+
+    # Emits a span whose duration was measured elsewhere. The event is
+    # emitted when the span ends; DevTools derives start = timestamp - duration.
+    ProfileSpan<public>(Name:string, DurationMs:float, Fields:[]string)<transacts>:int =
+        Emit("perf.span", array{DevToolsString("name", Name), DevToolsFloat("duration_ms", DurationMs)} + Fields)
+
+    # Emits a perf.sample. Metrics are typed fields, e.g.
+    #   PerfSample("world", array{DevToolsFloat("frame_ms", FrameMs), DevToolsInt("players", PlayerCount)})
+    # Canonical metric keys: frame_ms, tick_ms, entities, players, devices, memory_mb.
+    PerfSample<public>(Scope:string, Metrics:[]string)<transacts>:int =
+        Emit("perf.sample", array{DevToolsString("scope", Scope)} + Metrics)

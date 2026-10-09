@@ -176,6 +176,12 @@ export class SimulatedAdapter implements UEFNAdapter {
         { feature: "session lifecycle", status: "DIRECT", via: "simulator" },
         { feature: "runtime events", status: "DIRECT", via: "simulator" },
         { feature: "runtime commands", status: "DIRECT", via: "simulator", notes: SUPPORTED.join(", ") },
+        {
+          feature: "profiling",
+          status: "DIRECT",
+          via: "simulator",
+          notes: "synthetic perf.sample / perf.span from a cost model; not real measurements",
+        },
       ],
     };
   }

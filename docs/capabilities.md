@@ -50,7 +50,10 @@ classified as:
 | Game start / end commands | UNKNOWN | external → session channel not identified | ☐ |
 | Player actions (teleport, damage…) | INSTRUMENTED (proposed) | in-game *scenario device* runs the steps (below) | ☐ |
 | Screenshots | UNKNOWN | — | ☐ |
-| Profiling (memory, game update) | UNKNOWN | UEFN memory/perf tooling, possibly MCP | ☐ |
+| Profiling: event throughput, causal latency, stage timings | DERIVED | `buildProfile` over the event log and runner stages (docs/profiler.md) | ✅ (simulated only) |
+| Profiling: scoped timings and runtime samples | INSTRUMENTED | `ProfileBegin` / `ProfileEnd` / `ProfileSpan` / `PerfSample` in `devtools.verse` → `perf.span` / `perf.sample`; time source `GetSimulationElapsedTime` (per-frame, so spans only measure work that suspends) | ☐ |
+| Profiling: memory, engine frame cost | UNKNOWN | no Verse API known for memory or engine timings; UEFN memory/perf tooling, possibly MCP | ☐ |
+| Headed session (`--headed`) | UNKNOWN | `headed: true` forwarded to `mcp.tools.start_session`; effect depends on the UEFN tool | ☐ |
 | Headless execution | likely BLOCKED | needs a Windows runner with UEFN + Fortnite (spec §40) | ☐ |
 
 ## The command gap
