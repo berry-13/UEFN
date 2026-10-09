@@ -9,6 +9,7 @@ import { mcp } from "./mcp.ts";
 import { status } from "./status.ts";
 import { test } from "./test.ts";
 import { trace } from "./trace.ts";
+import { ui } from "./ui.ts";
 
 /** Help order. Add new commands here. */
-export const commands: Command[] = [status, capabilities, compile, test, trace, history, daemon, mcp, init, ci];
+export const commands: Command[] = [status, capabilities, compile, test, trace, history, daemon, ui, mcp, init, ci];

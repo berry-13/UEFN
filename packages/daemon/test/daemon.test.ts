@@ -210,7 +210,16 @@ test("serves static files without escaping the static root", async () => {
     assert.equal(escape.status, 404);
     const encoded = await raw(info.port, "/%2e%2e/secret.txt", { host: "127.0.0.1", ...auth });
     assert.equal(encoded.status, 404);
-    assert.equal((await fetch(`${url}/app.js`)).status, 401);
+    // Static assets load without the token; the API still needs it.
+    const anonymous = await fetch(`${url}/app.js`);
+    assert.equal(anonymous.status, 200);
+    assert.match(anonymous.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+    assert.equal((await fetch(`${url}/api/status`)).status, 401);
+    assert.equal((await fetch(`${url}/api/stream`)).status, 401);
+    assert.equal((await raw(info.port, "/../secret.txt", { host: "127.0.0.1" })).status, 404);
+    assert.equal((await raw(info.port, "/index.html", { host: "evil.example" })).status, 403);
+    assert.equal((await fetch(`${url}/api/status`, { headers: auth }).then((r) => r.json())).daemon.ui, true);
+    assert.equal(info.ui, true);
   } finally {
     await close();
   }

@@ -27,7 +27,7 @@ export interface DaemonOptions {
   port?: number;
   /** Fixed bearer token (tests); a random one is generated otherwise. */
   token?: string;
-  /** Serve files from this directory under `/` (GET/HEAD only). */
+  /** Serve files from this directory under `/` (GET/HEAD only, no token needed). */
   staticDir?: string;
   /** Called on `POST /api/shutdown`; defaults to {@link DevToolsDaemon.stop}. */
   onShutdown?: () => void;
@@ -159,7 +159,7 @@ export class DevToolsDaemon {
     this.unsubscribe = this.engine.events.subscribe((event, index) => this.onRuntimeEvent(event, index));
     this.heartbeat = setInterval(() => this.broadcastRaw(": heartbeat\n\n"), this.options.heartbeatMs ?? HEARTBEAT_MS);
     this.heartbeat.unref();
-    this.info = { pid: process.pid, port, token: this.token, root, startedAt: Date.now(), version: DAEMON_VERSION };
+    this.info = { pid: process.pid, port, token: this.token, root, startedAt: Date.now(), version: DAEMON_VERSION, ui: !!this.staticRoot };
     await writeDaemonInfo(this.info);
     return this.info;
   }
@@ -185,6 +185,10 @@ export class DevToolsDaemon {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!hostAllowed(req.headers.host)) throw new HttpError(403, "host not allowed");
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    // Static UI assets hold no secrets, so they load without the token (the UI gets it from the URL fragment).
+    if (this.staticRoot && !url.pathname.startsWith("/api/") && (req.method === "GET" || req.method === "HEAD")) {
+      return this.serveStatic(req, res, url);
+    }
     // EventSource cannot set headers, so the stream alone may carry the token in the query.
     const queryToken = url.pathname === "/api/stream" ? url.searchParams.get("token") : null;
     if (!this.authorized(req.headers.authorization, queryToken)) {
@@ -209,7 +213,6 @@ export class DevToolsDaemon {
       }
       throw new HttpError(methodMismatch ? 405 : 404, methodMismatch ? "method not allowed" : `no route for ${url.pathname}`);
     }
-    if (this.staticRoot && (req.method === "GET" || req.method === "HEAD")) return this.serveStatic(req, res, url);
     throw new HttpError(404, "not found");
   }
 
@@ -327,6 +330,7 @@ export class DevToolsDaemon {
         startedAt: this.info?.startedAt ?? 0,
         version: DAEMON_VERSION,
         streams: this.streams.size,
+        ui: !!this.staticRoot,
       },
     };
   }
@@ -452,6 +456,9 @@ export class DevToolsDaemon {
       "content-type": CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
       "content-length": info.size,
       "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      "referrer-policy": "no-referrer",
+      "cache-control": "no-cache",
     });
     if (req.method === "HEAD") return void res.end();
     createReadStream(file).pipe(res);

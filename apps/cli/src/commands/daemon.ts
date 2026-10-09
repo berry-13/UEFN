@@ -11,6 +11,7 @@ import {
   readDaemonInfo,
   removeDaemonInfo,
 } from "@uefn-devtools/daemon";
+import { desktopStaticDir, desktopUiBuilt } from "@uefn-devtools/desktop";
 import { int, openEngine, print, str, UsageError, type Command, type Values } from "../shared.ts";
 
 const START_TIMEOUT_MS = 30_000;
@@ -20,10 +21,11 @@ export const daemon: Command = {
   name: "daemon",
   usage: "daemon <start|stop|status>",
   summary: "Local daemon: one shared engine and session for CLI, desktop and editor",
-  options: { port: { type: "string" }, detach: { type: "boolean" } },
+  options: { port: { type: "string" }, detach: { type: "boolean" }, ui: { type: "boolean" } },
   optionHelp: [
     "--port <n>             TCP port on 127.0.0.1 (default: ephemeral)",
     "--detach               start in the background and return once it is listening",
+    "--ui                   also serve the desktop dashboard under / (see 'uefn ui')",
   ],
   async run(values, positionals) {
     switch (positionals[0]) {
@@ -34,7 +36,7 @@ export const daemon: Command = {
       case "status":
         return status(values);
       default:
-        throw new UsageError("usage: uefn daemon <start|stop|status> [--port n] [--detach]");
+        throw new UsageError("usage: uefn daemon <start|stop|status> [--port n] [--detach] [--ui]");
     }
   },
 };
@@ -45,6 +47,7 @@ async function projectRoot(values: Values): Promise<string> {
 
 async function startForeground(values: Values): Promise<number> {
   const port = int(str(values, "port"), "port") ?? 0;
+  if (values.ui && !desktopUiBuilt()) throw new UsageError("the desktop UI is not built; run 'pnpm build' first");
   const engine = await openEngine(values);
   let stopping = false;
   const shutdown = async () => {
@@ -54,10 +57,16 @@ async function startForeground(values: Values): Promise<number> {
     await engine.close().catch(() => {});
     process.exit(0);
   };
-  const server = new DevToolsDaemon({ engine, port, onShutdown: () => void shutdown() });
+  const server = new DevToolsDaemon({
+    engine,
+    port,
+    ...(values.ui ? { staticDir: desktopStaticDir() } : {}),
+    onShutdown: () => void shutdown(),
+  });
   const info = await server.start();
   print(values, { pid: info.pid, port: info.port, root: info.root, startedAt: info.startedAt, version: info.version }, () => {
     console.log(`DevTools daemon listening on http://127.0.0.1:${info.port} (pid ${info.pid})`);
+    if (info.ui) console.log("Dashboard served under /; 'uefn ui' opens it with the token");
     console.log(`Project   ${info.root}`);
     console.log(`Token     in ${daemonInfoPath(info.root)}`);
     console.log("Ctrl+C to stop");
@@ -67,7 +76,8 @@ async function startForeground(values: Values): Promise<number> {
   return new Promise<number>(() => {});
 }
 
-async function startDetached(values: Values): Promise<number> {
+/** `quiet` skips the success output (callers such as `uefn ui` print their own). */
+export async function startDetached(values: Values, quiet = false): Promise<number> {
   const root = await projectRoot(values);
   const existing = await readDaemonInfo(root);
   if (existing && !existing.stale) {
@@ -78,6 +88,7 @@ async function startDetached(values: Values): Promise<number> {
   const logPath = join(root, ".devtools", "daemon.log");
   const log = openSync(logPath, "a");
   const args = [process.argv[1]!, "daemon", "start"];
+  if (values.ui) args.push("--ui");
   for (const name of ["port", "adapter"] as const) {
     const v = str(values, name);
     if (v !== undefined) args.push(`--${name}`, v);
@@ -99,6 +110,7 @@ async function startDetached(values: Values): Promise<number> {
   while (Date.now() < deadline) {
     const info = await readDaemonInfo(root);
     if (info && info.pid === child.pid) {
+      if (quiet) return 0;
       print(values, { pid: info.pid, port: info.port, root: info.root, log: logPath }, () => {
         console.log(`DevTools daemon started on http://127.0.0.1:${info.port} (pid ${info.pid})`);
         console.log(`Log       ${logPath}`);
