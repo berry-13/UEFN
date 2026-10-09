@@ -126,6 +126,7 @@ export class StateProvider implements vscode.TreeDataProvider<StateNode> {
   readonly onDidChangeTreeData = this.emitter.event;
   private state: GameState | undefined;
   private error: string | undefined;
+  private requestSeq = 0;
   private pending: NodeJS.Timeout | undefined;
   private readonly project: Project;
 
@@ -134,15 +135,19 @@ export class StateProvider implements vscode.TreeDataProvider<StateNode> {
   }
 
   async refresh(): Promise<void> {
+    const seq = ++this.requestSeq;
     const client = this.project.client();
     if (!client) {
       this.state = undefined;
       this.error = undefined;
     } else {
       try {
-        this.state = await client.state();
+        const state = await client.state();
+        if (seq !== this.requestSeq) return;
+        this.state = state;
         this.error = undefined;
       } catch (error) {
+        if (seq !== this.requestSeq) return;
         this.error = (error as Error).message;
       }
     }

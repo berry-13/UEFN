@@ -31,6 +31,21 @@ export class HeadedView {
   private unsubscribe?: () => void;
   private lastLine = "";
   private readonly restore = () => process.stdout.write(LEAVE_ALT);
+  /** SIGINT/SIGTERM do not emit 'exit': restore the terminal, then die by the same signal. */
+  private readonly onSigint = () => this.onSignal("SIGINT");
+  private readonly onSigterm = () => this.onSignal("SIGTERM");
+
+  private onSignal(signal: NodeJS.Signals): void {
+    this.restore();
+    this.removeHandlers();
+    process.kill(process.pid, signal);
+  }
+
+  private removeHandlers(): void {
+    process.removeListener("exit", this.restore);
+    process.removeListener("SIGINT", this.onSigint);
+    process.removeListener("SIGTERM", this.onSigterm);
+  }
 
   constructor(
     private readonly engine: DevToolsEngine,
@@ -53,6 +68,8 @@ export class HeadedView {
     if (this.tty) {
       this.write(ENTER_ALT);
       process.once("exit", this.restore);
+      process.once("SIGINT", this.onSigint);
+      process.once("SIGTERM", this.onSigterm);
     }
     this.timer = setInterval(() => this.flush(), this.intervalMs);
     this.timer.unref();
@@ -73,7 +90,7 @@ export class HeadedView {
     if (this.timer) clearInterval(this.timer);
     if (this.tty) {
       this.write(LEAVE_ALT);
-      process.removeListener("exit", this.restore);
+      this.removeHandlers();
       this.write(this.transcript.join(""));
     } else {
       this.flush(true);
