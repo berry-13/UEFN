@@ -13,6 +13,7 @@ import { McpUefnAdapter, SimulatedAdapter, type CapabilityReport, type UEFNAdapt
 import { loadConfig, type LoadedConfig } from "./config.ts";
 import { EventStore, eventMatches, type EventQuery } from "./event-store.ts";
 import { captureGitInfo } from "./git.ts";
+import { DevToolsDatabase } from "./persistence.ts";
 import { discoverProject } from "./project.ts";
 import { applyEvent } from "./state.ts";
 
@@ -66,6 +67,8 @@ export class DevToolsEngine {
   private ready = false;
   private connected = false;
   lastCompile?: CompileResult;
+  /** SQLite sink and query layer; undefined when `persistence.enabled` is false. */
+  readonly db?: DevToolsDatabase;
 
   private constructor(
     readonly loaded: LoadedConfig,
@@ -77,6 +80,17 @@ export class DevToolsEngine {
       if (event.type === EventTypes.GameStarted && this.currentSession) this.currentSession.status = "playing";
       if (event.type === EventTypes.GameEnded && this.currentSession) this.currentSession.status = "connected";
     });
+    // persistence: begin
+    if (loaded.config.persistence.enabled) {
+      this.db = new DevToolsDatabase(resolve(loaded.root, loaded.config.persistence.path));
+      this.events.subscribe((event) => {
+        const session = this.currentSession;
+        if (!session) return;
+        this.db?.queueEvent(session.id, event);
+        if (event.type === EventTypes.GameStarted || event.type === EventTypes.GameEnded) this.db?.upsertSession(session);
+      });
+    }
+    // persistence: end
   }
 
   static async open(options: EngineOptions = {}): Promise<DevToolsEngine> {
@@ -158,6 +172,12 @@ export class DevToolsEngine {
       ...(git ? { git } : {}),
     };
     this.ready = false;
+    // persistence: begin
+    if (this.db) {
+      this.currentSession.id = this.db.uniqueSessionId(this.currentSession.id, this.currentSession.startedAt);
+      this.db.upsertSession(this.currentSession);
+    }
+    // persistence: end
     const transport = this.adapter.transport();
     await transport.start();
     this.pump = (async () => {
@@ -180,6 +200,8 @@ export class DevToolsEngine {
     this.pump = undefined;
     this.currentSession.status = "stopped";
     this.currentSession.endedAt = Date.now();
+    this.db?.upsertSession(this.currentSession); // persistence
+    this.db?.flush(); // persistence
     this.ready = false;
   }
 
@@ -187,6 +209,7 @@ export class DevToolsEngine {
     await this.stopSession();
     if (this.connected) await this.adapter.disconnect();
     this.connected = false;
+    this.db?.close(); // persistence
   }
 
   /** Sends a command to the runtime; throws {@link CommandError} on failure. */

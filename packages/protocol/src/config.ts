@@ -75,6 +75,13 @@ export const DevToolsConfig = z.object({
       ready_timeout: Duration.default("120s"),
     })
     .default({ ready_timeout: "120s" }),
+  /** SQLite persistence of sessions, events and runs (docs/persistence.md). */
+  persistence: z
+    .object({
+      enabled: z.boolean().default(true),
+      path: z.string().default("./.devtools/devtools.db"),
+    })
+    .default({ enabled: true, path: "./.devtools/devtools.db" }),
   instrumentation: z.object({ enabled: z.boolean().default(true) }).default({ enabled: true }),
   tests: z
     .object({
