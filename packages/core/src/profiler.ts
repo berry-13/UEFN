@@ -132,8 +132,12 @@ function spanName(e: RuntimeEvent): string {
  * into a profile. Pure: the same inputs always give the same profile.
  */
 export function buildProfile(events: readonly RuntimeEvent[], options: ProfileOptions = {}): Profile {
-  const startMs = events.length ? Math.min(...events.map((e) => e.timestamp)) : 0;
-  const endMs = events.length ? Math.max(...events.map((e) => e.timestamp)) : 0;
+  let startMs = events.length ? Infinity : 0;
+  let endMs = events.length ? -Infinity : 0;
+  for (const e of events) {
+    if (e.timestamp < startMs) startMs = e.timestamp;
+    if (e.timestamp > endMs) endMs = e.timestamp;
+  }
   const durationMs = endMs - startMs;
   const seconds = durationMs / 1000;
   const rate = (n: number) => (seconds > 0 ? r3(n / seconds) : 0);

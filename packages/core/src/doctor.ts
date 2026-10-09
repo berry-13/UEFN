@@ -207,8 +207,23 @@ export async function runDoctor(source?: DevToolsEngine | LoadedConfig, options:
     });
     add({ id: "tests.ids", title: "Test ids unique", status: "skip", detail: "no tests" });
   } else {
-    const result = await options.loadTests(testFiles);
-    if (result.errors.length > 0) {
+    let result: Awaited<ReturnType<DoctorTestLoader>> | undefined;
+    let loadError: string | undefined;
+    try {
+      result = await options.loadTests(testFiles);
+    } catch (error) {
+      loadError = (error as Error).message;
+    }
+    if (!result) {
+      add({
+        id: "tests.discover",
+        title: "Tests load and validate",
+        status: "fail",
+        detail: `could not load tests: ${loadError}`,
+        fix: "fix the error above, then re-run 'uefn doctor'",
+      });
+      add({ id: "tests.ids", title: "Test ids unique", status: "skip", detail: "tests could not be loaded" });
+    } else if (result.errors.length > 0) {
       add({
         id: "tests.discover",
         title: "Tests load and validate",
@@ -225,9 +240,9 @@ export async function runDoctor(source?: DevToolsEngine | LoadedConfig, options:
       });
     }
     const seen = new Map<string, string[]>();
-    for (const t of result.tests) seen.set(t.id, [...(seen.get(t.id) ?? []), relative(root, t.file)]);
+    for (const t of result?.tests ?? []) seen.set(t.id, [...(seen.get(t.id) ?? []), relative(root, t.file)]);
     const dupes = [...seen].filter(([, files]) => files.length > 1);
-    add(
+    if (result) add(
       dupes.length === 0
         ? { id: "tests.ids", title: "Test ids unique", status: "pass", detail: `${seen.size} unique id(s)` }
         : {
@@ -449,15 +464,28 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
   }
 
   let emitter = false;
-  for (const file of verseFiles) {
-    const scan = scanVerse(file, await readFile(file, "utf8"));
-    if (scan.decls.some((d) => d.name === "devtools_emitter") || scan.identifiers.some((i) => i.name === "devtools_emitter")) {
-      emitter = true;
-      break;
+  let scanError: string | undefined;
+  try {
+    for (const file of verseFiles) {
+      const scan = scanVerse(file, await readFile(file, "utf8"));
+      if (scan.decls.some((d) => d.name === "devtools_emitter") || scan.identifiers.some((i) => i.name === "devtools_emitter")) {
+        emitter = true;
+        break;
+      }
     }
+  } catch (error) {
+    scanError = (error as Error).message;
   }
   add(
-    emitter
+    scanError
+      ? {
+          id: "verse.runtime",
+          title: "DevTools Verse runtime",
+          status: "fail",
+          detail: `could not scan Verse files: ${scanError}`,
+          fix: `check that the files under ${config.paths.verse} are readable`,
+        }
+      : emitter
       ? { id: "verse.runtime", title: "DevTools Verse runtime", status: "pass", detail: "devtools_emitter found in project Verse" }
       : {
           id: "verse.runtime",
