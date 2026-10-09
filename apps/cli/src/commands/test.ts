@@ -3,6 +3,7 @@ import { watch } from "node:fs";
 import { resolve } from "node:path";
 import { consoleReporter, runTests } from "@uefn-devtools/test";
 import { int, openEngine, str, type Command, type Values } from "../shared.ts";
+import { assertInteractive, startInteractive } from "../interactive.ts";
 
 export const test: Command = {
   name: "test",
@@ -15,6 +16,8 @@ export const test: Command = {
     "no-compile": { type: "boolean" },
     watch: { type: "boolean" },
     verbose: { type: "boolean" },
+    headed: { type: "boolean" },
+    debug: { type: "boolean" },
   },
   optionHelp: [
     "--repeat <n>           Run each test n times and report reliability",
@@ -23,10 +26,14 @@ export const test: Command = {
     "--no-compile           Skip the Verse build stage",
     "--watch                Re-run when Verse or test files change",
     "--verbose              Print every iteration with --repeat",
+    "--headed               Show the running game (live state view; hint to the mcp adapter)",
+    "--debug                Pause before each step and on failure (TTY; implies --repeat 1)",
   ],
   async run(values, positionals) {
     if (values.watch) return watchTests(values);
+    assertInteractive(values);
     const engine = await openEngine(values);
+    const interactive = startInteractive(values, engine);
     try {
       const repeat = int(str(values, "repeat"), "repeat");
       const seed = int(str(values, "seed"), "seed");
@@ -37,11 +44,13 @@ export const test: Command = {
         ...(seed !== undefined ? { seed } : {}),
         ...(retries !== undefined ? { retries } : {}),
         skipBuild: values["no-compile"] === true,
-        ...(values.json ? {} : { onEvent: consoleReporter({ verbose: values.verbose === true }) }),
+        ...(values.json ? {} : { onEvent: consoleReporter({ verbose: values.verbose === true, ...interactive.reporter }) }),
+        ...interactive.runOptions,
       });
       if (values.json) process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
       return summary.status === "passed" ? 0 : summary.status === "failed" ? 1 : 2;
     } finally {
+      interactive.stop();
       await engine.close();
     }
   },

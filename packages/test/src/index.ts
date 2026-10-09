@@ -16,3 +16,12 @@ export { loadTests, findTestFiles, filterTests } from "./discover.ts";
 export { loadYamlTests, YamlTestSchema } from "./yaml.ts";
 export { correlateFailures } from "./correlate.ts";
 export { normalizeEventType } from "./names.ts";
+export {
+  DEBUG_ABORT_MESSAGE,
+  type DebugAction,
+  type DebugHooks,
+  type DebugStepInfo,
+  type DebugFailureInfo,
+  type DebugTestInfo,
+} from "./debug.ts";
+export { renderFrame, renderStateLine, progressBar, describeEvent, recentEvents, type FrameInput } from "./headed.ts";

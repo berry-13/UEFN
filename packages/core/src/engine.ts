@@ -10,6 +10,7 @@ import type {
 } from "@uefn-devtools/protocol";
 import { EventTypes, emptyGameState, parseDuration } from "@uefn-devtools/protocol";
 import { McpUefnAdapter, SimulatedAdapter, type CapabilityReport, type UEFNAdapter } from "@uefn-devtools/uefn";
+import type { StartSessionOptions } from "@uefn-devtools/uefn";
 import { loadConfig, type LoadedConfig } from "./config.ts";
 import { EventStore, eventMatches, type EventQuery } from "./event-store.ts";
 import { captureGitInfo } from "./git.ts";
@@ -141,12 +142,12 @@ export class DevToolsEngine {
   }
 
   /** Launches a session, or reuses the one already running. */
-  async startSession(): Promise<Session> {
+  async startSession(options: StartSessionOptions = {}): Promise<Session> {
     await this.connect();
     if (this.currentSession && this.currentSession.status !== "stopped" && this.currentSession.status !== "failed") {
       return this.currentSession;
     }
-    const [handle, git] = await Promise.all([this.adapter.startSession(), captureGitInfo(this.root)]);
+    const [handle, git] = await Promise.all([this.adapter.startSession(options), captureGitInfo(this.root)]);
     const project = await this.project();
     this.currentSession = {
       id: handle.id,
