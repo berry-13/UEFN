@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DevToolsEngine } from "@uefn-devtools/core";
-import { correlateFailures, runTests } from "@uefn-devtools/test";
+import { correlateFailures, loadTests, runTests } from "@uefn-devtools/test";
 
 async function project(config: string, files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "uefn-devtools-"));
@@ -117,4 +117,22 @@ test("correlation needs both outcomes", () => {
   });
   assert.deepEqual(correlateFailures([attempt("passed", 1)]), []);
   assert.equal(correlateFailures([attempt("passed", 1), attempt("failed", 3)]).length, 1);
+});
+
+test("loading the same typescript test file twice still returns its tests", async () => {
+  const body = (name: string) => `import { test } from "@uefn-devtools/test";\ntest(${JSON.stringify(name)}, async () => {});\n`;
+  const dir = await project(CONFIG(), { "twice.test.ts": body("first") });
+  await mkdir(join(dir, "node_modules", "@uefn-devtools"), { recursive: true });
+  const { symlink } = await import("node:fs/promises");
+  await symlink(new URL("..", import.meta.url).pathname, join(dir, "node_modules", "@uefn-devtools", "test"));
+  const file = join(dir, "Tests", "twice.test.ts");
+  const names = async () => (await loadTests([file])).tests.map((t) => t.name);
+  assert.deepEqual(await names(), ["first"]);
+  // A long-lived host (the daemon) loads tests again for every listing and run.
+  assert.deepEqual(await names(), ["first"]);
+  // An edited file is picked up.
+  await writeFile(file, body("second"));
+  const later = new Date(Date.now() + 5000);
+  await utimes(file, later, later);
+  assert.deepEqual(await names(), ["second"]);
 });

@@ -6,14 +6,15 @@ share one engine, one session and one event log instead of each embedding
 their own.
 
 ```
-uefn daemon start [--port n] [--detach]   # foreground until Ctrl+C, or background
+uefn daemon start [--port n] [--detach] [--ui]   # foreground until Ctrl+C, or background
 uefn daemon status                         # exit 0 when running, 1 when not
 uefn daemon stop                           # asks the daemon to shut down
 ```
 
 `--adapter` and `--config` apply as for every other command. `--detach`
 spawns a background process that logs to `.devtools/daemon.log` and returns
-once `daemon.json` appears (30s timeout). Only one live daemon may serve a
+once `daemon.json` appears (30s timeout). `--ui` also serves the desktop
+dashboard under `/` (see [desktop.md](desktop.md)). Only one live daemon may serve a
 project; a second `start` fails while the first is alive.
 
 Package: `@uefn-devtools/daemon` (`DevToolsDaemon`, `DaemonClient`,
@@ -26,8 +27,11 @@ Written atomically on start with mode `0600` (it holds the token), removed on
 stop.
 
 ```json
-{ "pid": 41231, "port": 43123, "token": "<base64url>", "root": "/path/to/project", "startedAt": 1791566525656, "version": "0.1.0" }
+{ "pid": 41231, "port": 43123, "token": "<base64url>", "root": "/path/to/project", "startedAt": 1791566525656, "version": "0.1.0", "ui": true }
 ```
+
+`ui` is true when the daemon serves the dashboard (it was started with a
+`staticDir`, e.g. `uefn daemon start --ui`).
 
 `readDaemonInfo(root)` returns the file plus `stale: true` when `pid` is no
 longer running (a crashed daemon). `DaemonClient.fromRoot(root)` refuses a
@@ -36,8 +40,8 @@ stale file; `uefn daemon stop` removes one; `start` overwrites one.
 ## Security
 
 - Listens on `127.0.0.1` only. The port is ephemeral unless `--port` is set.
-- Every request needs `Authorization: Bearer <token>`; anything else gets
-  `401`. The token is 32 random bytes generated at start and compared in
+- Every `/api/*` request needs `Authorization: Bearer <token>`; anything
+  else gets `401`. Static files (below) are the only exception. The token is 32 random bytes generated at start and compared in
   constant time.
 - `GET /api/stream` additionally accepts `?token=` because `EventSource`
   cannot set headers. No other route reads the query token.
@@ -79,13 +83,13 @@ All responses are JSON. Errors are `{ "error": "<message>" }` with status
   "project": "CapturePoint", "root": "/path/to/project", "adapter": "simulated",
   "session": { "id": "sim-session-1", "status": "connected", "...": "..." },
   "runtimeReady": true, "phase": "ended", "events": 60, "busy": false,
-  "daemon": { "pid": 41231, "port": 43123, "startedAt": 1791566525656, "version": "0.1.0", "streams": 1 }
+  "daemon": { "pid": 41231, "port": 43123, "startedAt": 1791566525656, "version": "0.1.0", "streams": 1, "ui": true }
 }
 ```
 
 `session` is `null` before the first session. `busy` is true while a
 compile, session change or test run holds the lock. `streams` counts open
-SSE connections.
+SSE connections. `ui` mirrors the field in `daemon.json`.
 
 ### `GET /api/state/at?index=N`
 
@@ -147,9 +151,18 @@ from that point, so a reconnecting client misses nothing.
 `new DevToolsDaemon({ engine, staticDir })` serves files from `staticDir`
 under `/` for `GET`/`HEAD` (directories serve `index.html`). Paths are
 decoded, resolved and checked against the real path of the root, so `..`
-and symlinks cannot escape it. The same bearer token is required; a desktop
-shell that loads the UI from the daemon must attach the header (or the UI
-must be loaded another way). `/api/*` always takes precedence.
+and symlinks cannot escape it. Static files are served **without** the bearer
+token: they hold no secrets, and a browser window cannot attach a header to
+its first navigation. The dashboard URL carries a launch ticket instead
+(`/#ticket=...`): `POST /api/ui/ticket` (token required) mints one that is
+single-use and expires after 60s, and the page trades it once at
+`POST /api/ui/exchange` (`{ ticket }`, no token, only when a `staticDir` is
+set) for the token, which it then uses for `/api/*` and the stream. The token
+itself never appears in a URL, a browser command line or terminal output. The Host check still applies, and responses
+carry `Content-Security-Policy: default-src 'self'; frame-ancestors 'none';
+base-uri 'none'; form-action 'none'` and `Referrer-Policy: no-referrer`.
+`/api/*` always takes precedence; without a `staticDir`, non-API paths need
+the token and answer `404`.
 
 ## `DaemonClient`
 

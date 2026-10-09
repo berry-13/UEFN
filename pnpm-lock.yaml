@@ -26,6 +26,9 @@ importers:
       '@uefn-devtools/daemon':
         specifier: workspace:*
         version: link:../../packages/daemon
+      '@uefn-devtools/desktop':
+        specifier: workspace:*
+        version: link:../desktop
       '@uefn-devtools/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
@@ -35,6 +38,15 @@ importers:
       '@uefn-devtools/test':
         specifier: workspace:*
         version: link:../../packages/test
+
+  apps/desktop:
+    devDependencies:
+      '@uefn-devtools/daemon':
+        specifier: workspace:*
+        version: link:../../packages/daemon
+      '@uefn-devtools/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
 
   apps/vscode:
     devDependencies:

@@ -14,6 +14,8 @@ export interface DaemonInfo {
   /** Epoch milliseconds. */
   startedAt: number;
   version: string;
+  /** True when the daemon serves the desktop UI under `/` (started with a `staticDir`). */
+  ui?: boolean;
 }
 
 export interface SessionSnapshot {
@@ -30,7 +32,7 @@ export interface StatusResponse extends SessionSnapshot {
   events: number;
   /** True while a compile, session change or test run holds the lock. */
   busy: boolean;
-  daemon: { pid: number; port: number; startedAt: number; version: string; streams: number };
+  daemon: { pid: number; port: number; startedAt: number; version: string; streams: number; ui: boolean };
 }
 
 export interface EventsResponse {

@@ -10,6 +10,7 @@
     "@uefn-devtools/core": "workspace:*",
     "@uefn-devtools/mcp": "workspace:*",
     "@uefn-devtools/daemon": "workspace:*",
+    "@uefn-devtools/desktop": "workspace:*",
     "@uefn-devtools/protocol": "workspace:*",
     "@uefn-devtools/test": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.0"

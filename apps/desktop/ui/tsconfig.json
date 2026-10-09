@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../public/js",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "sourceMap": false,
+    "declarationDir": "../dist/ui-types",
+    "tsBuildInfoFile": "../dist/ui.tsbuildinfo"
+  },
+  "include": ["."],
+  "references": [{ "path": "../../../packages/protocol" }, { "path": "../../../packages/daemon" }]
+}

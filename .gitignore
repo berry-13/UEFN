@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 .devtools/
 *.uefntrace
+apps/desktop/public/js/
