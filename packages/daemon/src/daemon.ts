@@ -70,6 +70,9 @@ class HttpError extends Error {
   }
 }
 
+/** Longest /api/shutdown waits for an in-progress run before closing anyway. */
+const SHUTDOWN_WAIT_MS = 30_000;
+
 /** Serialises operations that touch the session, so concurrent clients cannot interleave runs. */
 class Mutex {
   private tail: Promise<unknown> = Promise.resolve();
@@ -328,6 +331,15 @@ export class DevToolsDaemon {
         method: "POST",
         path: "/api/shutdown",
         handler: mutating("daemon.shutdown", async () => {
+          // Let an in-progress run or session change finish before the engine closes.
+          await new Promise<void>((done) => {
+            const timer = setTimeout(done, SHUTDOWN_WAIT_MS);
+            timer.unref();
+            void this.lock.run(async () => {}).finally(() => {
+              clearTimeout(timer);
+              done();
+            });
+          });
           setImmediate(this.options.onShutdown ?? (() => void this.stop()));
           return { stopping: true };
         }),
@@ -422,10 +434,10 @@ export class DevToolsDaemon {
       "x-accel-buffering": "no",
     });
     res.write(": connected\n\n");
-    // Replay from ?fromIndex or after Last-Event-ID (EventSource reconnects) before going live.
+    // Replay after Last-Event-ID (EventSource reconnects; it wins over the original ?fromIndex) or from ?fromIndex before going live.
     const lastId = headerString(req.headers["last-event-id"]);
     const fromParam = url.searchParams.get("fromIndex");
-    const from = fromParam !== null ? Number(fromParam) : lastId !== undefined ? Number(lastId) + 1 : NaN;
+    const from = lastId !== undefined ? Number(lastId) + 1 : fromParam !== null ? Number(fromParam) : NaN;
     if (Number.isInteger(from) && from >= 0) {
       this.engine.events.all(from).forEach((event, i) => res.write(runtimeFrame(event, from + i)));
     }
@@ -479,16 +491,32 @@ export class DevToolsDaemon {
     if (!info?.isFile()) throw new HttpError(404, "not found");
     // Symlinks must not lead outside the static root either.
     if (!within(root, await realpath(file))) throw new HttpError(404, "not found");
-    res.writeHead(200, {
+    const headers = {
       "content-type": CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
       "content-length": info.size,
       "x-content-type-options": "nosniff",
       "content-security-policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
       "referrer-policy": "no-referrer",
       "cache-control": "no-cache",
+    };
+    if (req.method === "HEAD") {
+      res.writeHead(200, headers);
+      return void res.end();
+    }
+    // Headers go out once the file has opened: it can pass stat and still fail to open
+    // (permissions, deleted in between), and an unhandled stream error would kill the daemon.
+    const stream = createReadStream(file);
+    stream.on("error", () => {
+      if (!res.headersSent) {
+        res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+        res.end("could not read file");
+      } else res.destroy();
     });
-    if (req.method === "HEAD") return void res.end();
-    createReadStream(file).pipe(res);
+    stream.once("open", () => {
+      res.writeHead(200, headers);
+      stream.pipe(res);
+    });
+    res.on("close", () => stream.destroy());
   }
 }
 

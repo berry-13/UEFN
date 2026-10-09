@@ -12,6 +12,9 @@ export class TestsView {
   private tests: TestsResponse["tests"] = [];
   private results = new Map<string, TestResult>();
   private running = false;
+  /** True while this page's own POST /api/tests/run is in flight; that request settles the run itself. */
+  private requesting = false;
+  private runStartedAt = 0;
   private total = 0;
   private attempts = 0;
   private lastAttemptText = "";
@@ -108,6 +111,8 @@ export class TestsView {
     this.seed.removeAttribute("aria-invalid");
     this.error.hidden = true;
     this.setRunning(true);
+    this.runStartedAt = Date.now();
+    this.requesting = true;
     try {
       const summary = await api.runTests({
         repeat,
@@ -120,8 +125,22 @@ export class TestsView {
     } catch (error) {
       this.showError(`Test run failed: ${(error as Error).message}`);
     } finally {
+      this.requesting = false;
       this.setRunning(false);
     }
+  }
+
+  /**
+   * Runner events are not replayed after an SSE reconnect, so a `done` event
+   * can be lost. The daemon status says whether a run is still going; if it
+   * is not, release the controls. `requestedAt` guards against a status
+   * response that was requested before the current run began.
+   */
+  reconcile(busy: boolean, requestedAt: number): void {
+    if (busy || !this.running || this.requesting || requestedAt < this.runStartedAt) return;
+    this.setRunning(false);
+    this.stage.textContent = "Run ended while the connection was down.";
+    this.live.textContent = "The test run finished while the dashboard was disconnected. Run the tests again to see fresh results.";
   }
 
   /** Progress for any run, including ones started by other clients of the daemon. */
@@ -169,6 +188,7 @@ export class TestsView {
   }
 
   private reset(): void {
+    this.runStartedAt = Date.now();
     this.total = 0;
     this.attempts = 0;
     this.progress.removeAttribute("value");
