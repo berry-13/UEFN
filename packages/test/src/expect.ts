@@ -13,6 +13,7 @@ import {
   type Duration,
 } from "./fixtures.ts";
 import { normalizeEventType } from "./names.ts";
+import { matchSnapshot, type SnapshotMatchOptions } from "./snapshot.ts";
 
 export class AssertionError extends Error {
   constructor(
@@ -242,6 +243,21 @@ export class Expectation {
         times === 0 ? { ...options, timeout: 0, settle: options.settle ?? options.timeout ?? this.ctx.expectSettle } : options,
       );
     }
+  }
+
+  // ── snapshot matcher ──────────────────────────────────────────────────
+  /**
+   * `expect(game).toMatchSnapshot(name?)`: compares the settled, normalized
+   * GameState with the stored snapshot. A missing snapshot is written (and
+   * fails when `CI` is set); `--update-snapshots` overwrites.
+   */
+  async toMatchSnapshot(nameOrOptions?: string | SnapshotMatchOptions, options: SnapshotMatchOptions = {}): Promise<void> {
+    if (!isHandle(this.received, "game")) throw new TypeError("toMatchSnapshot expects the game fixture");
+    this.ctx.ensureActive();
+    const opts = typeof nameOrOptions === "object" ? nameOrOptions : options;
+    const name = (typeof nameOrOptions === "string" ? nameOrOptions : opts.name) ?? `snapshot-${++this.ctx.snapshotCounter}`;
+    const outcome = await matchSnapshot(this.ctx, name, opts);
+    this.record(outcome.description, outcome.pass, outcome.expected ?? "stored snapshot", outcome.received ?? "current state", outcome.message);
   }
 
   /** `expect(game.event(type)).toOccurWithin(ms)`: measured from handle creation. */

@@ -192,6 +192,7 @@ export class EventExpectation {
 }
 
 export class GameFixture {
+  readonly [HANDLE] = "game" as const;
   readonly events: EventsHandle;
   private readonly players = new Map<string, PlayerHandle>();
 
