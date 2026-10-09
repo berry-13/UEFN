@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { describeFailure, parseJsonOutput, resolveCli, runCli, shellSafeArgs } from "../dist/cli.js";
+import { describeFailure, killCommand, parseJsonOutput, resolveCli, runCli, shellSafeArgs } from "../dist/cli.js";
 
 const only = (...files: string[]) => (f: string) => files.includes(f);
 
@@ -45,6 +45,19 @@ test("searches PATH, then falls back to the bare name", () => {
 test("uses .cmd shims through a shell on Windows", () => {
   const cli = resolveCli({ root: "C:\\w", platform: "win32", pathEnv: "", exists: only("C:\\w\\node_modules\\.bin\\uefn.cmd") });
   assert.deepEqual(cli, { command: "C:\\w\\node_modules\\.bin\\uefn.cmd", args: [], source: "workspace", shell: true });
+});
+
+test("parseJsonOutput takes the summary after noisy test output", () => {
+  const summary = JSON.stringify({ status: "passed", tests: [{ id: "a" }] }, null, 2);
+  const noisy = `{ x: 1 }\n{\n  "logged": true\n}\nsome text {\n${summary}\n`;
+  assert.deepEqual(parseJsonOutput(noisy), { status: "passed", tests: [{ id: "a" }] });
+});
+
+test("killCommand kills the process tree with taskkill on Windows only", () => {
+  assert.deepEqual(killCommand("win32", 42), { command: "taskkill", args: ["/pid", "42", "/T", "/F"] });
+  assert.equal(killCommand("linux", 42), undefined);
+  assert.equal(killCommand("darwin", 42), undefined);
+  assert.equal(killCommand("win32", undefined), undefined);
 });
 
 test("parseJsonOutput tolerates leading noise and rejects non-JSON", () => {

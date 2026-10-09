@@ -131,3 +131,45 @@ test("recordings save to disk and regenerate the same test", async () => {
   const loaded = await loadRecording(file);
   assert.equal(generateYamlTest(loaded).yaml, generateYamlTest(recording).yaml);
 });
+
+test("a disable during a recording of an already running game becomes a step", async () => {
+  const dir = await project();
+  await writeFile(join(dir, "script.yaml"), "- start_game\n");
+  const steps = await loadStepScript(join(dir, "script.yaml"));
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  let recording;
+  try {
+    await engine.startSession();
+    await engine.waitForRuntime();
+    await engine.command({ type: "reset" });
+    engine.resetObservedState();
+    const ctx0 = new TestContext(engine, engine.events.mark(), parseDuration("5s"), parseDuration("250ms"));
+    for (const step of steps) await runStep(createFixtures(ctx0).game, step);
+    await engine.sleep(500);
+    const recorder = new Recorder(engine, { name: "running" });
+    recorder.start();
+    const ctx = new TestContext(engine, engine.events.mark(), parseDuration("5s"), parseDuration("250ms"));
+    const { game } = createFixtures(ctx);
+    await runStep(game, { disable_device: { id: "B" } });
+    await engine.sleep(500);
+    recording = recorder.stop();
+  } finally {
+    await engine.close();
+  }
+  const { test: generated, yaml } = generateYamlTest(recording, { name: "Running game" });
+  const all = [...generated.setup, ...generated.steps];
+  assert.ok(all.some((s) => typeof s === "object" && "disable_device" in s), JSON.stringify(all));
+  assert.ok(generated.assert.some((a) => "device" in a && a.device.id === "B" && a.device.enabled === false));
+});
+
+test("a newline in the recording name cannot inject yaml", async () => {
+  const dir = await project();
+  const recording = await record(dir, "- start_game\n");
+  recording.name = "evil\ninjected: true\r# x";
+  const { test: generated, yaml } = generateYamlTest(recording);
+  const doc = parse(yaml) as Record<string, unknown>;
+  assert.equal(doc["injected"], undefined);
+  assert.equal(doc["name"], generated.name);
+  assert.equal(generated.name, "evil\ninjected: true\r# x");
+  assert.ok(yaml.split("\n").filter((l) => l.startsWith("#")).length === 2);
+});
