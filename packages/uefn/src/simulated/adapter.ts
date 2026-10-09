@@ -28,6 +28,11 @@ const SUPPORTED: readonly RuntimeCommand["type"][] = [
   "seed",
 ];
 
+/** Ticks run per timer wake-up before yielding to the event loop. */
+const MAX_TICKS_PER_WAKE = 50;
+/** Backlog (in ticks) beyond which the catch-up is abandoned and re-based. */
+const MAX_BACKLOG_TICKS = 1000;
+
 class SimulatedTransport implements RuntimeTransport {
   readonly name = "simulated";
   private queue = new AsyncQueue<RuntimeEvent>();
@@ -72,10 +77,17 @@ class SimulatedTransport implements RuntimeTransport {
     let simulated = this.clock.now();
     while (this.running) {
       await this.clock.sleep(this.config.tick_ms);
-      while (this.running && this.clock.now() - simulated >= this.config.tick_ms) {
+      // Bounded per wake-up so a slow tick cannot starve the event loop; the
+      // sleep above always yields. Far behind (ticks cost more than they are
+      // worth in session time): drop the backlog instead of spiralling.
+      let ticked = 0;
+      while (this.running && ticked < MAX_TICKS_PER_WAKE && this.clock.now() - simulated >= this.config.tick_ms) {
         this.world.tick(this.config.tick_ms);
         simulated += this.config.tick_ms;
+        ticked++;
       }
+      const now = this.clock.now();
+      if (now - simulated > MAX_BACKLOG_TICKS * this.config.tick_ms) simulated = now - this.config.tick_ms;
     }
   }
 
