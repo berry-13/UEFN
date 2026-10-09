@@ -65,9 +65,17 @@ class SimulatedTransport implements RuntimeTransport {
       source: { type: "system", id: "runtime" },
       payload: { runtimeVersion: "simulated" },
     });
+    // Fixed-step catch-up: a timer can fire late (and at a high time_scale a
+    // tick is about 1ms of wall time), so run every tick the clock says is
+    // due. The world then never lags the clock that timeouts are measured on,
+    // and the tick sequence stays the same however late the timers are.
+    let simulated = this.clock.now();
     while (this.running) {
       await this.clock.sleep(this.config.tick_ms);
-      if (this.running) this.world.tick(this.config.tick_ms);
+      while (this.running && this.clock.now() - simulated >= this.config.tick_ms) {
+        this.world.tick(this.config.tick_ms);
+        simulated += this.config.tick_ms;
+      }
     }
   }
 
@@ -176,6 +184,12 @@ export class SimulatedAdapter implements UEFNAdapter {
         { feature: "session lifecycle", status: "DIRECT", via: "simulator" },
         { feature: "runtime events", status: "DIRECT", via: "simulator" },
         { feature: "runtime commands", status: "DIRECT", via: "simulator", notes: SUPPORTED.join(", ") },
+        {
+          feature: "profiling",
+          status: "DIRECT",
+          via: "simulator",
+          notes: "synthetic perf.sample / perf.span from a cost model; not real measurements",
+        },
       ],
     };
   }

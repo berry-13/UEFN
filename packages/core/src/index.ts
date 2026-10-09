@@ -10,3 +10,4 @@ export * from "./persistence.ts";
 export * from "./recorder.ts";
 export * from "./deps.ts";
 export * from "./doctor.ts";
+export * from "./profiler.ts";

@@ -41,6 +41,13 @@ understand these:
 | `score.changed` | `team`, `previous`, `current`, `delta` |
 | `probe.updated` | `probe`, `value` |
 | `log` | `category`, `level`, `message` |
+| `perf.sample` | `scope`, then numeric metrics: `frame_ms`, `tick_ms`, `entities`, `players`, `devices`, `memory_mb?` (any other number is kept) |
+| `perf.span` | `name`, `duration_ms`; `parentEventId` names the event whose handler was timed |
+
+`perf.*` events are telemetry, not gameplay: the reducer ignores them,
+failure correlation skips them, and the headed and debug views hide them. A
+`perf.span` is emitted when the span ends, so its `timestamp` is the end time
+and the start is `timestamp - duration_ms`. See [profiler.md](profiler.md).
 
 Tests and MCP tools also accept PascalCase names: `CaptureCompleted` is
 `capture.completed` and `PlayerEnteredArea` is `player.entered_area`.
@@ -68,6 +75,14 @@ interpolate `{…}`.
 
 ```
 [2026.10.04-13.24.11:123][456]LogVerse: [UEFN-DEVTOOLS]|1|E|7|score.changed|team:i=1|current:i=50|src=device:CapturePointA|parent=6
+```
+
+The profiling helpers (`ProfileSpan`, `ProfileEnd`, `PerfSample`) use the
+same `E` records; no new record kind was needed:
+
+```
+[UEFN-DEVTOOLS]|1|E|12|perf.span|name=capture_handler|duration_ms:f=0.250000|parent:i=11
+[UEFN-DEVTOOLS]|1|E|13|perf.sample|scope=world|frame_ms:f=16.700000|players:i=2
 ```
 
 ## RuntimeCommand
@@ -99,6 +114,7 @@ attempt's trace), `state.json`, `compile.json` and `session.json`.
 | `uefn_get_project`, `uefn_get_capabilities`, `uefn_get_session_state`, `uefn_get_compile_errors` | read_project |
 | `uefn_get_players`, `uefn_get_player`, `uefn_get_devices`, `uefn_get_device` | read_project |
 | `uefn_get_events`, `uefn_trace_event`, `uefn_wait_for_event`, `uefn_list_tests` | read_project |
+| `uefn_profile` | read_project |
 | `uefn_compile_verse` | compile |
 | `uefn_start_session`, `uefn_stop_session`, `uefn_start_game`, `uefn_stop_game` | start_sessions |
 | `uefn_run_test`, `uefn_run_tests` | run_tests |

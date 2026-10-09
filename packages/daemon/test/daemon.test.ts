@@ -155,7 +155,8 @@ test("runs tests through the API, streams events, time travel and trace", async 
     const paged = await client.events({ limit: 2 });
     assert.equal(paged.events.length, 2);
     assert.equal(paged.nextIndex, 2);
-    assert.equal(paged.size, status.events);
+    // The simulator keeps emitting perf.sample events, so the log only grows.
+    assert.ok(paged.size >= status.events);
 
     const trace = await client.trace(score.id);
     assert.match(trace.text, /capture\.completed/);
@@ -168,7 +169,7 @@ test("runs tests through the API, streams events, time travel and trace", async 
     assert.equal(before.state.teams["1"]?.score ?? 0, 0);
     assert.equal(at.state.teams["1"]?.score, 50);
     assert.equal(at.timestamp, score.timestamp);
-    await assert.rejects(client.stateAt(status.events), /out of range/);
+    await assert.rejects(client.stateAt(1_000_000), /out of range/);
 
     const audit = await readFile(join(dir, ".devtools", "audit.log"), "utf8");
     assert.match(audit, /"actor":"test-client","action":"daemon.tests.run","outcome":"ok"/);

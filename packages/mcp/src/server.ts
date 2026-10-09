@@ -2,6 +2,7 @@ import { mkdir, writeFile, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { AuditLog, DevToolsEngine, formatCausalTree } from "@uefn-devtools/core";
+import { buildProfile } from "@uefn-devtools/core";
 import type { RunSummary } from "@uefn-devtools/protocol";
 import {
   YamlTestSchema,
@@ -256,6 +257,18 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
       if (!tree) return fail(`unknown event '${event_id}'`);
       return ok({ tree: formatCausalTree(tree), ancestry: engine.events.ancestry(event_id).map((e) => e.id) });
     }),
+  );
+
+  server.registerTool(
+    "uefn_profile",
+    {
+      description:
+        "Profile of the current session's events: throughput, hot event types, perf.span stats, perf.sample series and causal latency per parent->child edge (docs/profiler.md).",
+      inputSchema: { from_index: z.number().int().nonnegative().optional() },
+    },
+    guarded("uefn_profile", "read_project", async ({ from_index }: { from_index?: number }) =>
+      ok(buildProfile(engine.events.all(from_index ?? 0))),
+    ),
   );
 
   server.registerTool(
