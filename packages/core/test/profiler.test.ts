@@ -105,3 +105,11 @@ test("chrome trace uses X for spans and stages, C for samples", () => {
   assert.ok(trace.traceEvents.every((e) => Number.isInteger(e.ts) && e.pid === 1));
   JSON.parse(JSON.stringify(trace));
 });
+
+test("buildProfile handles hundreds of thousands of events without overflowing the stack", () => {
+  const many: RuntimeEvent[] = [];
+  for (let i = 0; i < 300_000; i++) many.push({ id: `x${i}`, timestamp: 1000 + i, type: "noop.event", payload: {} });
+  const profile = buildProfile(many);
+  assert.equal(profile.session.durationMs, 299_999);
+  assert.equal(profile.session.startMs, 1000);
+});

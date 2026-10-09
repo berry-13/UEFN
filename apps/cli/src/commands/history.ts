@@ -20,9 +20,9 @@ export const history: Command = {
   async run(values, positionals) {
     const limit = int(str(values, "limit"), "limit") ?? 20;
     const engine = await openEngine(values);
-    const db = engine.db;
-    if (!db) throw new UsageError("persistence is disabled (persistence.enabled: false)");
     try {
+      const db = engine.db;
+      if (!db) throw new UsageError("persistence is disabled (persistence.enabled: false)");
       const testId = positionals[0];
       if (values.sessions) {
         const sessions = db.listSessions({ limit });
