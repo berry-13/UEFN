@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CompileResult, DeviceInfo, Diagnostic, SessionStatus } from "@uefn-devtools/protocol";
 import { DevToolsConfig } from "@uefn-devtools/protocol";
 import type {
@@ -39,13 +40,15 @@ export class McpUefnAdapter implements UEFNAdapter {
   readonly name = "mcp";
   readonly clock: Clock = new RealClock();
   private client?: Client;
+  private mcpTransport?: Transport;
+  private connected = false;
   private tools: { name: string; description?: string }[] = [];
   private session?: { id: string; transport: RuntimeTransport };
 
   constructor(private readonly options: McpAdapterOptions) {}
 
   async connect(): Promise<void> {
-    if (this.client) return;
+    if (this.connected) return;
     const { command, args, url } = this.options.mcp;
     const transport = url
       ? new StreamableHTTPClientTransport(new URL(url))
@@ -54,23 +57,40 @@ export class McpUefnAdapter implements UEFNAdapter {
         : undefined;
     if (!transport) throw new Error("mcp adapter requires `mcp.command` or `mcp.url` in uefn-devtools.config.yaml");
     const client = new Client({ name: "uefn-devtools", version: "0.1.0" });
-    await client.connect(transport);
+    // Kept before awaiting so disconnect() can stop a spawned server even if the handshake never completes.
     this.client = client;
-    const listed = await client.listTools();
-    this.tools = listed.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}) }));
+    this.mcpTransport = transport;
+    try {
+      await client.connect(transport);
+      const listed = await client.listTools();
+      this.tools = listed.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}) }));
+      this.connected = true;
+    } catch (error) {
+      await this.disconnect().catch(() => {});
+      throw error;
+    }
   }
 
   async disconnect(): Promise<void> {
     await this.session?.transport.stop();
     this.session = undefined;
-    await this.client?.close();
+    const client = this.client;
+    const transport = this.mcpTransport;
     this.client = undefined;
+    this.mcpTransport = undefined;
+    this.connected = false;
+    try {
+      await client?.close();
+    } finally {
+      // Client.close() only reaches the transport once the handshake began; close it directly as well.
+      await transport?.close().catch(() => {});
+    }
   }
 
   private async call(key: ToolKey, args: Record<string, unknown> = {}): Promise<ToolOutput> {
     const name = this.options.mcp.tools[key];
     if (!name) throw new Error(`no UEFN MCP tool mapped for '${key}' (set mcp.tools.${key} in the config)`);
-    if (!this.client) throw new Error("mcp adapter is not connected");
+    if (!this.client || !this.connected) throw new Error("mcp adapter is not connected");
     if (!this.tools.some((t) => t.name === name)) {
       throw new Error(`UEFN MCP server does not expose tool '${name}' (mapped from '${key}')`);
     }

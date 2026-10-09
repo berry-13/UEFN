@@ -689,8 +689,7 @@ export async function changedFiles(root: string): Promise<string[]> {
   } catch {
     return [];
   }
-  const files = info.changedFiles.map((f) => (f.includes(" -> ") ? f.split(" -> ").pop()! : f).replace(/^"|"$/g, ""));
-  return files.map((f) => toPosix(relative(root, join(top, f)))).filter((f) => !f.startsWith(".."));
+  return info.changedFiles.map((f) => toPosix(relative(root, join(top, f)))).filter((f) => !f.startsWith(".."));
 }
 
 // ---------------------------------------------------------------------------
