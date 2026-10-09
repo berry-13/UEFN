@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { openSync, closeSync } from "node:fs";
+import { openSync, closeSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -130,6 +130,12 @@ async function stop(values: Values): Promise<number> {
   try {
     await DaemonClient.fromInfo(info, "cli").shutdown();
   } catch {
+    // daemon.json is a file in the project, so its pid is not trusted on its
+    // own: only signal a process whose command line is a `daemon start`.
+    if (!isDaemonProcess(info.pid)) {
+      console.error(`daemon did not answer its shutdown endpoint and pid ${info.pid} cannot be confirmed as a DevTools daemon; stop it manually`);
+      return 1;
+    }
     process.kill(info.pid, "SIGTERM");
   }
   const deadline = Date.now() + STOP_TIMEOUT_MS;
@@ -164,4 +170,15 @@ async function status(values: Values): Promise<number> {
     console.log(`Clients   ${s.daemon.streams} stream(s)${s.busy ? ", busy" : ""}`);
   });
   return 0;
+}
+
+/** True when `pid` is a running `uefn daemon start`. Only checkable through /proc (Linux, WSL). */
+function isDaemonProcess(pid: number): boolean {
+  try {
+    const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    const i = argv.indexOf("daemon");
+    return i > 0 && argv[i + 1] === "start";
+  } catch {
+    return false;
+  }
 }
