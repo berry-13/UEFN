@@ -55,6 +55,11 @@ player moved.
 
 ## Rules and limits
 
+- Verified live on UEFN 42.30: binding players, teleports and step
+  reporting. `Damage` had no visible effect while the player was still in the
+  island's sky-spawn state; land the player first (a `wait`, or teleport to
+  the ground) and check the island allows damage, and assert the resulting
+  health rather than only that a report arrived.
 - Steps run in order on the device's own clock. The host checks each report
   in order and fails on a mismatch (`was 'damage_player' in game but the
   test sent 'teleport'`), a device-side failure, or a timeout.

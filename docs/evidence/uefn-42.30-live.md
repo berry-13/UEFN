@@ -75,3 +75,27 @@ are in [`examples/uefn-live`](../../examples/uefn-live).
 
 Also found: a folder named `DevTools` under `Content/` becomes a Verse module,
 so a field named `DevTools` in a device beside it is ambiguous (error 3588).
+
+## Scenario device (player actions), 2026-10-10
+
+`uefn scenario scenario-live` generated a device from a YAML test (spawn,
+damage 25, wait 1s, teleport to `Sky`); it compiled and was placed over MCP,
+and `uefn test scenario-live` passed (100s). From the editor log:
+
+```
+[UEFN-DEVTOOLS]|1|E|1000002|player.spawned|player=player1|position:v=0.000000,0.000000,20995.640416
+[UEFN-DEVTOOLS]|1|E|1000004|player.state_changed|player=player1|health:f=100.000000|shield:f=0.000000
+[UEFN-DEVTOOLS]|1|E|1000006|player.moved|player=player1|position:v=0.000000,0.000000,3000.000000
+```
+
+| Action | Result |
+|---|---|
+| Bind player, report position | ✅ |
+| Teleport | ✅ the player moved from the sky spawn (z ≈ 21000) to exactly (0, 0, 3000) |
+| Damage | ☐ `Damage(25.0)` ran but health stayed 100: the player was still in the sky-spawn state, or the island disables damage. Not verified |
+| Step ordering, reports, host confirmation | ✅ |
+
+Two launches before this one stalled in UEFN's own pipeline (Session
+Inspector: Versioning failed after 31 minutes, "Unable to Play: Failed to
+resolve validation session"); DevTools now reports that case explicitly
+instead of a bare MCP timeout.

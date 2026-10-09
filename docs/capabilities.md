@@ -81,7 +81,8 @@ classified as:
 | Device state | INSTRUMENTED | Verse subscribes to device events and emits | | ☐ |
 | Push changes | DIRECT | SessionToolset `PushChanges(bVerseOnly)` (not used by DevTools yet) | binary (42.30) | ☐ |
 | Client log search | DIRECT | SessionToolset `GetClientLogEntries(Pattern, StartLine)` (not used yet) | binary (42.30) | ☐ |
-| Player actions (teleport, damage…) | INSTRUMENTED (proposed) | in-game *scenario device* runs the steps (below); the Device and Entity toolsets edit the level, not the running match | binary (42.30) | ☐ |
+| Player actions: teleport, enter, leave | INSTRUMENTED | generated scenario device (`uefn scenario`, [scenarios](scenarios.md)) | live (42.30) | ✅ |
+| Player actions: damage, eliminate | INSTRUMENTED | scenario device calls `Damage`; no effect observed live while the player was in the sky-spawn state (or with damage disabled) | live (42.30) | ☐ |
 | Screenshots | UNKNOWN | none found | | ☐ |
 | Profiling: event throughput, causal latency, stage timings | DERIVED | `buildProfile` over the event log and runner stages (docs/profiler.md) | | ✅ (simulated only) |
 | Profiling: scoped timings and runtime samples | INSTRUMENTED | `ProfileBegin` / `ProfileEnd` / `ProfileSpan` / `PerfSample` in `devtools.verse` → `perf.span` / `perf.sample`; time source `GetSimulationElapsedTime` (per-frame, so spans only measure work that suspends) | | ☐ |
@@ -100,7 +101,7 @@ skip. Any one of these options could close the gap. All are unverified:
    session tools (binary evidence, unverified live), which DevTools sends when
    `mcp.tools.start_game` / `end_game` are mapped. No tool acts on players in
    the running match, so player actions still need option 2 or 3.
-2. **Scenario device (INSTRUMENTED).** DevTools generates a Verse device from
+2. **Scenario device (INSTRUMENTED, built: `uefn scenario`, [scenarios](scenarios.md); teleport verified live).** DevTools generates a Verse device from
    the test definition into `/DevTools/generated/`. When the game starts, the
    device drives the developer's own player (`fort_character.TeleportTo`,
    damage, etc.) through the steps. Selecting a test means recompiling with
