@@ -50,8 +50,8 @@ Duration: 0.83s
 | MCP server (21 tools, permission modes, audit log) | working |
 | Simulated adapter: deterministic capture-point world with fault injection and perf samples | working |
 | Log transport and compile-diagnostics parser | tested against real UEFN 41.10 editor logs; game start/end derived from the log |
-| UEFN MCP adapter (compile, sessions, `StartGame`/`StopGame`) | built for the UEFN 42.30 MCP server (seen in the shipped binaries), **not yet driven live** |
-| Verse runtime emitter (`runtime/verse`) | written, **not yet compiled in UEFN** |
+| UEFN MCP adapter (compile, sessions, `StartGame`/`StopGame`) | driven live on UEFN 42.30: discovery, compile with diagnostics, session status; **session launch and match start not yet run live** ([evidence](docs/evidence/uefn-42.30-live.md)) |
+| Verse runtime emitter (`runtime/verse`) | compiles on UEFN 42.30; log output in a live session **not yet observed** |
 
 Everything runs today against the **simulated adapter**. That covers
 developing the engine, test API and agent loop. The real-UEFN path has

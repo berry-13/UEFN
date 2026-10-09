@@ -197,12 +197,7 @@ export class McpUefnAdapter implements UEFNAdapter {
   async getSessionStatus(): Promise<SessionStatus | "none"> {
     if (!this.options.mcp.tools.session_state) return this.session ? "connected" : "none";
     const out = await this.call("session_state");
-    const raw = (isRecord(out.json) ? String(out.json["status"] ?? out.json["state"] ?? "") : out.text).toLowerCase();
-    if (/play|running|in.?game/.test(raw)) return "playing";
-    if (/connect|ready|session/.test(raw)) return "connected";
-    if (/start|launch|load/.test(raw)) return "starting";
-    if (/fail|error/.test(raw)) return "failed";
-    return "none";
+    return sessionStatusFrom(out);
   }
 
   async getDevices(): Promise<DeviceInfo[]> {
@@ -271,20 +266,8 @@ const DIAGNOSTIC_LINE =
 
 /** Accepts structured diagnostics when offered, else parses `file.verse(l,c): error X: msg` lines. */
 export function extractDiagnostics(out: ToolOutput): Diagnostic[] {
-  if (isRecord(out.json) && Array.isArray(out.json["diagnostics"])) {
-    return (out.json["diagnostics"] as unknown[]).filter(isRecord).map((d) => {
-      // UEFN 42.30 names severities Error / Warning / Information / Hint.
-      const sev = String(d["severity"] ?? d["Severity"] ?? "error").toLowerCase();
-      const file = d["file"] ?? d["File"] ?? d["filePath"] ?? d["FilePath"];
-      const message = d["message"] ?? d["Message"];
-      return {
-        severity: sev === "warning" ? "warning" : sev === "info" || sev === "information" || sev === "hint" ? "info" : "error",
-        message: String(message ?? ""),
-        ...(typeof file === "string" ? { file } : {}),
-        ...(typeof d["line"] === "number" ? { line: d["line"] } : {}),
-      };
-    });
-  }
+  const structured = structuredDiagnostics(out.json);
+  if (structured) return structured;
   const diagnostics: Diagnostic[] = [];
   const seen = new Set<string>();
   for (const line of out.text.split(/\r?\n/)) {
@@ -342,4 +325,55 @@ class McpCommandTransport implements RuntimeTransport {
   supportedCommands(): readonly RuntimeCommand["type"][] {
     return [...this.adapter.gameCommands(), ...this.inner.supportedCommands()];
   }
+}
+
+/**
+ * Structured diagnostics. Live UEFN 42.30 `VerseToolset.BuildAll` returns
+ * `{"returnValue":[{severity:"Error", code:3588, message, filePath,
+ * span:{startLine, startCharacter, ...}}]}` with 0-indexed positions; a plain
+ * array or a `diagnostics` key is accepted too. Positions become 1-indexed.
+ */
+function structuredDiagnostics(json: unknown): Diagnostic[] | undefined {
+  const list = Array.isArray(json)
+    ? json
+    : isRecord(json) && Array.isArray(json["returnValue"])
+      ? json["returnValue"]
+      : isRecord(json) && Array.isArray(json["diagnostics"])
+        ? json["diagnostics"]
+        : undefined;
+  if (!list) return undefined;
+  return (list as unknown[]).filter(isRecord).map((d) => {
+    const sev = String(d["severity"] ?? d["Severity"] ?? "error").toLowerCase();
+    const file = d["filePath"] ?? d["file"] ?? d["FilePath"] ?? d["File"];
+    const span = isRecord(d["span"]) ? d["span"] : undefined;
+    const line = typeof span?.["startLine"] === "number" ? span["startLine"] + 1 : typeof d["line"] === "number" ? d["line"] : undefined;
+    const column = typeof span?.["startCharacter"] === "number" ? span["startCharacter"] + 1 : typeof d["column"] === "number" ? d["column"] : undefined;
+    const code = d["code"] ?? d["Code"];
+    return {
+      severity: sev === "warning" ? "warning" : sev === "info" || sev === "information" || sev === "hint" ? "info" : "error",
+      message: String(d["message"] ?? d["Message"] ?? ""),
+      ...(typeof file === "string" ? { file } : {}),
+      ...(line !== undefined ? { line } : {}),
+      ...(column !== undefined ? { column } : {}),
+      ...(code !== undefined && code !== null ? { code: String(code) } : {}),
+    } satisfies Diagnostic;
+  });
+}
+
+/**
+ * Maps a session-status tool result. Live UEFN 42.30 `GetSessionStatus`
+ * answers Disconnected / Connecting / Connected / Reconnecting /
+ * UpdatingContent (wrapped as `{"returnValue": ...}`); order matters, since
+ * "disconnected" and "reconnecting" both contain "connect".
+ */
+export function sessionStatusFrom(out: { text: string; json?: unknown }): SessionStatus | "none" {
+  const json = out.json;
+  const value = isRecord(json) ? (json["returnValue"] ?? json["status"] ?? json["state"]) : json;
+  const raw = (typeof value === "string" ? value : isRecord(value) ? JSON.stringify(value) : out.text).toLowerCase();
+  if (/disconnect|unconnected|not.?connected|none/.test(raw)) return "none";
+  if (/fail|error/.test(raw)) return "failed";
+  if (/connecting|reconnecting|updating|start|launch|load/.test(raw)) return "starting";
+  if (/play|running|in.?game/.test(raw)) return "playing";
+  if (/connected|ready/.test(raw)) return "connected";
+  return "none";
 }

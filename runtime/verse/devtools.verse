@@ -6,9 +6,9 @@
 #
 #   [UEFN-DEVTOOLS]|1|<kind>|<seq>|<name>|key:t=value|...
 #
-# STATUS: UNVERIFIED. This file has not yet been compiled against UEFN.
-# Compiling it and confirming the lines reach the log file is step 2 of
-# POC-001 (docs/capabilities.md). Expect small syntax fixes.
+# STATUS: compiles unchanged on UEFN 42.30 (live, 2026-10-09). That its
+# lines reach the editor log during a play session is not verified yet
+# (POC-001 steps 4 to 8, docs/capabilities.md).
 #
 # Copy this file into your project's Verse folder (DevTools never edits your
 # gameplay files) and give one devtools_emitter instance to the devices that

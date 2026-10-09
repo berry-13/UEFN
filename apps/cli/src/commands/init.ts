@@ -23,12 +23,18 @@ simulated:
       score: 50
 
 mcp:
-  # UEFN 42.30+: enable the "UEFN MCP Toolsets" beta setting, then
-  # 'ModelContextProtocol.GenerateClientConfig ClaudeCode' prints the URL.
-  # url: http://localhost:<port>/mcp
-  # Map from 'uefn capabilities --adapter mcp' (see docs/capabilities.md):
-  #   compile, start_session, stop_session, session_state, start_game, end_game
+  # UEFN 42.30+: enable Project > Project Settings > Experimental >
+  # "UEFN MCP Toolsets" (docs/evidence/uefn-42.30-live.md).
+  # url: http://localhost:8000/mcp
   tools: {}
+  # Live 42.30 tool names, reached through call_tool:
+  # tools:
+  #   compile: ValkyrieToolset.VerseToolset/BuildAll
+  #   start_session: ValkyrieToolset.SessionToolset/StartSession
+  #   stop_session: ValkyrieToolset.SessionToolset/StopSession
+  #   session_state: ValkyrieToolset.SessionToolset/GetSessionStatus
+  #   start_game: ValkyrieToolset.SessionToolset/StartGame
+  #   end_game: ValkyrieToolset.SessionToolset/StopGame
 
 runtime:
   # log_path: C:/Users/<you>/AppData/Local/UnrealEditorFortnite/Saved/Logs/UnrealEditorFortnite.log
