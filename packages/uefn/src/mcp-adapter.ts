@@ -198,7 +198,15 @@ export class McpUefnAdapter implements UEFNAdapter {
       // No `headed` argument: every UEFN play session launches the Fortnite
       // client (seen in real editor logs), and an unknown argument could make
       // a strictly validated tool reject the call.
-      const out = await this.call("start_session");
+      const out = await this.call("start_session").catch((error: Error) => {
+        // StartSession blocks until the client is in the match; when UEFN's own
+        // launch pipeline stalls (seen live: Versioning failed with "Failed to
+        // resolve validation session"), only a timeout reaches us.
+        throw new Error(
+          `UEFN did not finish launching the session (${error.message}). Check UEFN's Session Inspector ` +
+            "for the failed stage and close any 'Unable to Play' dialog before retrying.",
+        );
+      });
       if (out.isError) throw new Error(`UEFN refused to start a session: ${out.text}`);
     }
     if (!this.options.logPath) {
