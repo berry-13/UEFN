@@ -63,7 +63,10 @@ export interface TestsResponse {
 }
 
 export interface RunTestsRequest {
+  /** Substring of a test id, name or file. */
   filter?: string;
+  /** Exact test ids to run (applied after `filter`). */
+  ids?: string[];
   repeat?: number;
   seed?: number;
   /** Compile Verse first (default true). */

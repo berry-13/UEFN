@@ -1,15 +1,18 @@
 import { spawn } from "node:child_process";
 import { openSync, closeSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { findConfig } from "@uefn-devtools/core";
 import {
   DaemonClient,
   DevToolsDaemon,
   daemonInfoPath,
   isProcessAlive,
+  probeDaemon,
   readDaemonInfo,
   removeDaemonInfo,
+  type DaemonInfo,
 } from "@uefn-devtools/daemon";
 import { desktopStaticDir, desktopUiBuilt } from "@uefn-devtools/desktop";
 import { int, openEngine, print, str, UsageError, type Command, type Values } from "../shared.ts";
@@ -41,8 +44,22 @@ export const daemon: Command = {
   },
 };
 
+/**
+ * The project root as the engine would resolve it, without loading the config:
+ * stop and status must work even when the config is invalid.
+ */
 async function projectRoot(values: Values): Promise<string> {
-  return (await openEngine(values)).root;
+  const config = str(values, "config");
+  if (config !== undefined) return dirname(resolve(config));
+  const found = await findConfig(process.cwd());
+  return found ? dirname(found) : resolve(process.cwd());
+}
+
+/** daemon.json for a daemon that actually answers; a running pid alone may have been reused. */
+async function liveDaemon(root: string): Promise<{ info: DaemonInfo & { stale: boolean }; live: boolean } | undefined> {
+  const info = await readDaemonInfo(root);
+  if (!info) return undefined;
+  return { info, live: !info.stale && (await probeDaemon(info)) };
 }
 
 async function startForeground(values: Values): Promise<number> {
@@ -79,9 +96,9 @@ async function startForeground(values: Values): Promise<number> {
 /** `quiet` skips the success output (callers such as `uefn ui` print their own). */
 export async function startDetached(values: Values, quiet = false): Promise<number> {
   const root = await projectRoot(values);
-  const existing = await readDaemonInfo(root);
-  if (existing && !existing.stale) {
-    console.error(`daemon already running (pid ${existing.pid}, port ${existing.port})`);
+  const existing = await liveDaemon(root);
+  if (existing?.live) {
+    console.error(`daemon already running (pid ${existing.info.pid}, port ${existing.info.port})`);
     return 1;
   }
   await mkdir(join(root, ".devtools"), { recursive: true });
@@ -123,23 +140,34 @@ export async function startDetached(values: Values, quiet = false): Promise<numb
     }
     await delay(100);
   }
+  // Do not leave a half-started daemon running in the background.
+  if (exited === null) {
+    try {
+      child.kill();
+    } catch {
+      // already gone
+    }
+  }
   console.error(`daemon did not write ${daemonInfoPath(root)} within ${START_TIMEOUT_MS / 1000}s; see ${logPath}`);
   return 1;
 }
 
 async function stop(values: Values): Promise<number> {
   const root = await projectRoot(values);
-  const info = await readDaemonInfo(root);
-  if (!info) {
+  const found = await liveDaemon(root);
+  if (!found) {
     console.log("No daemon is running.");
     return 0;
   }
-  if (info.stale) {
+  const { info, live } = found;
+  // Not answering and not provably a daemon: the pid is gone or now belongs to something else.
+  if (!live && (info.stale || !isDaemonProcess(info.pid))) {
     await removeDaemonInfo(root, info.pid);
-    console.log(`Removed stale daemon.json (pid ${info.pid} was not running).`);
+    console.log(`Removed stale daemon.json (pid ${info.pid} is not a running daemon).`);
     return 0;
   }
   try {
+    if (!live) throw new Error("not answering");
     await DaemonClient.fromInfo(info, "cli").shutdown();
   } catch {
     // daemon.json is a file in the project, so its pid is not trusted on its
@@ -163,14 +191,16 @@ async function stop(values: Values): Promise<number> {
 
 async function status(values: Values): Promise<number> {
   const root = await projectRoot(values);
-  const info = await readDaemonInfo(root);
-  if (!info || info.stale) {
+  const found = await liveDaemon(root);
+  if (!found?.live) {
+    const info = found?.info;
     const data = { running: false, ...(info ? { stale: true, pid: info.pid } : {}) };
     print(values, data, () =>
       console.log(info ? `Not running (stale daemon.json, pid ${info.pid}; 'uefn daemon stop' removes it)` : "Not running"),
     );
     return 1;
   }
+  const info = found.info;
   const s = await DaemonClient.fromInfo(info, "cli").status();
   print(values, { running: true, ...s }, () => {
     console.log(`Daemon    http://127.0.0.1:${s.daemon.port} (pid ${s.daemon.pid}, v${s.daemon.version})`);

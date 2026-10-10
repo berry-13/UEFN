@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { request } from "node:http";
+import { request, type IncomingMessage } from "node:http";
 import { chmod, mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DevToolsEngine } from "@uefn-devtools/core";
-import { DaemonClient, DevToolsDaemon, daemonInfoPath, readDaemonInfo, type StreamMessage } from "@uefn-devtools/daemon";
+import { DaemonClient, DevToolsDaemon, daemonInfoPath, daemonLockPath, probeDaemon, readDaemonInfo, type StreamMessage } from "@uefn-devtools/daemon";
 
 const TEST_YAML = `name: Capture A
 setup:
@@ -291,6 +291,143 @@ test("shutdown waits for an in-progress run", async () => {
     await shutdown;
     await new Promise((r) => setTimeout(r, 20));
     assert.equal(stopped, true);
+  } finally {
+    await close();
+  }
+});
+
+test("two concurrent starts for one project: exactly one wins, and the lock is released on stop", async () => {
+  const dir = await project();
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const a = new DevToolsDaemon({ engine });
+  const b = new DevToolsDaemon({ engine });
+  const results = await Promise.allSettled([a.start(), b.start()]);
+  assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+  const winner = results[0].status === "fulfilled" ? a : b;
+  await winner.stop();
+  await assert.rejects(stat(daemonLockPath(dir)));
+  const again = new DevToolsDaemon({ engine });
+  await again.start();
+  await again.stop();
+  await engine.close();
+});
+
+test("a lock left by a dead process is taken over", async () => {
+  const dir = await project();
+  await mkdir(join(dir, ".devtools"));
+  await writeFile(daemonLockPath(dir), JSON.stringify({ pid: 2 ** 30, nonce: "x" }));
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const daemon = new DevToolsDaemon({ engine });
+  await daemon.start();
+  await daemon.stop();
+  await engine.close();
+});
+
+test("daemon.json whose pid runs but whose daemon does not answer is not a live daemon", async () => {
+  const dir = await project();
+  await mkdir(join(dir, ".devtools"));
+  // Our own pid is certainly alive; nothing listens on port 1.
+  await writeFile(daemonInfoPath(dir), JSON.stringify({ pid: process.pid, port: 1, token: "x", root: dir, startedAt: 0, version: "0" }));
+  assert.equal(await probeDaemon({ port: 1, token: "x" }), false);
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const daemon = new DevToolsDaemon({ engine });
+  const info = await daemon.start();
+  assert.equal(await probeDaemon(info), true);
+  await daemon.stop();
+  await engine.close();
+});
+
+test("a start that fails after listening tears everything down", async () => {
+  const dir = await project();
+  // A directory where daemon.json goes makes the final rename fail.
+  await mkdir(join(dir, ".devtools", "daemon.json"), { recursive: true });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const daemon = new DevToolsDaemon({ engine });
+  await assert.rejects(daemon.start());
+  assert.equal((daemon as unknown as { server: { listening: boolean } }).server.listening, false);
+  assert.equal(daemon.port, 0);
+  await assert.rejects(stat(daemonLockPath(dir)));
+  await engine.close();
+});
+
+test("default shutdown answers before it stops, and refuses mutations meanwhile", async () => {
+  const { dir, engine, client, close } = await start();
+  try {
+    // Hold the session lock with a compile that finishes only when released.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const compile = engine.compile.bind(engine);
+    engine.compile = async () => {
+      await gate;
+      return compile();
+    };
+    const held = client.compile();
+    while (!(await client.status()).busy) await new Promise((r) => setTimeout(r, 5));
+    const shutdown = client.shutdown();
+    // An invalid run body answers 400 while the daemon is open and 503 once it is closing.
+    const probe = () => client.runTests({ repeat: 0 }).then(() => 200, (e: { status: number }) => e.status);
+    let code: number;
+    while ((code = await probe()) === 400) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(code, 503);
+    await assert.rejects(client.compile(), /shutting down/);
+    release();
+    assert.equal((await held).success, true);
+    assert.deepEqual(await shutdown, { stopping: true });
+    for (let i = 0; i < 100 && (await readDaemonInfo(dir)); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(await readDaemonInfo(dir), undefined);
+  } finally {
+    await close();
+  }
+});
+
+test("runs exact test ids through the API", async () => {
+  const { dir, client, close } = await start();
+  try {
+    await writeFile(join(dir, "Tests", "capture-twice.test.yaml"), TEST_YAML.replace("name: Capture A", "name: Capture A twice"));
+    const summary = await client.runTests({ ids: ["capture-a"] });
+    assert.equal(summary.status, "passed", JSON.stringify(summary.error ?? summary.tests));
+    assert.deepEqual(summary.tests.map((t) => t.id), ["capture-a"]);
+  } finally {
+    await close();
+  }
+});
+
+test("a stream that stops reading is dropped instead of buffered without bound", async () => {
+  const dir = await project();
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const daemon = new DevToolsDaemon({ engine, streamBufferLimit: 64 * 1024 });
+  const info = await daemon.start();
+  const client = DaemonClient.fromInfo(info);
+  try {
+    const res = await new Promise<IncomingMessage>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port: info.port, path: `/api/stream?token=${info.token}` }, resolve);
+      req.on("error", reject);
+      req.end();
+    });
+    res.pause();
+    res.on("error", () => {});
+    while ((await client.status()).daemon.streams === 0) await new Promise((r) => setTimeout(r, 5));
+    const chunk = `: ${"x".repeat(1024 * 1024)}\n\n`;
+    const broadcast = (daemon as unknown as { broadcastRaw(chunk: string): void }).broadcastRaw.bind(daemon);
+    // Kernel socket buffers absorb some data first; the daemon must give up well before 256 MiB.
+    for (let i = 0; i < 256 && (await client.status()).daemon.streams > 0; i++) {
+      broadcast(chunk);
+      await new Promise((r) => setImmediate(r));
+    }
+    assert.equal((await client.status()).daemon.streams, 0);
+    res.destroy();
+  } finally {
+    await daemon.stop();
+    await engine.close();
+  }
+});
+
+test("aborting a client stream before its headers arrive resolves quietly", async () => {
+  const { client, close } = await start();
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    await client.stream(() => {}, { signal: controller.signal });
   } finally {
     await close();
   }
