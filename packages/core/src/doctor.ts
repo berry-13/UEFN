@@ -396,9 +396,11 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
     const adapter = new McpUefnAdapter({ mcp });
     const timeoutMs = options.connectTimeoutMs ?? 10_000;
     let tools: string[] | undefined;
+    let exposed = new Set<string>();
     try {
       await withTimeout(adapter.connect(), timeoutMs, "connecting to the MCP server");
       tools = ((await adapter.describeCapabilities()).tools ?? []).map((t) => t.name);
+      exposed = adapterExposedTools(adapter, Object.values(mcp.tools));
       add({ id: "mcp.connect", title: "MCP server reachable", status: "pass", detail: `${tools.length} tool(s) exposed` });
     } catch (error) {
       add({
@@ -417,7 +419,7 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
       add({ id: "mcp.tool_names", title: "Mapped tools exist on server", status: "skip", detail: "could not connect" });
     } else {
       const mapped = Object.entries(mcp.tools).filter((e): e is [string, string] => typeof e[1] === "string");
-      const absent = mapped.filter(([, name]) => !adapterHasTool(tools, name));
+      const absent = mapped.filter(([, name]) => !exposed.has(name));
       add(
         absent.length === 0
           ? { id: "mcp.tool_names", title: "Mapped tools exist on server", status: "pass", detail: mapped.length ? mapped.map(([, n]) => n).join(", ") : "nothing mapped" }
@@ -532,7 +534,10 @@ async function checkDaemon(add: Add, root: string): Promise<void> {
   }
 }
 
-/** Mirrors McpUefnAdapter.hasTool: a listed tool, or `<toolset>/<tool>` through `call_tool`. */
-function adapterHasTool(tools: string[], mapping: string): boolean {
-  return tools.includes(mapping) || (mapping.includes("/") && tools.includes("call_tool"));
+/**
+ * The mappings the connected adapter can call, read before it disconnects:
+ * McpUefnAdapter.hasTool checks `<toolset>/<tool>` against `describe_toolset`.
+ */
+function adapterExposedTools(adapter: McpUefnAdapter, mappings: (string | undefined)[]): Set<string> {
+  return new Set(mappings.filter((m): m is string => typeof m === "string" && adapter.hasTool(m)));
 }
