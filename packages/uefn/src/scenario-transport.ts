@@ -16,7 +16,25 @@ interface Report {
   index: number;
   action: string;
   player?: string;
+  /** The step's command argument, from devices generated with argument reports. */
+  arg?: string;
   failed?: string;
+}
+
+/** The command argument a scenario step was generated from (see ScenarioPlanStep.arg). */
+function commandArg(command: RuntimeCommand): string | undefined {
+  switch (command.type) {
+    case "teleport":
+      return command.location;
+    case "leave_area":
+      return command.area;
+    case "damage_player":
+      return String(command.amount);
+    case "eliminate_player":
+      return command.by ?? "";
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -25,11 +43,21 @@ interface Report {
  * The device runs its steps on its own; the host only checks that each one
  * happened, in order, and fails loudly on a mismatch, a device-side failure
  * or a timeout. A new `scenario.started` (match restart) resets the cursor.
+ *
+ * Scenario events carry the test id (`scenario`) and the plan fingerprint
+ * (`plan`). The transport locks onto the first scenario that starts in a
+ * match and ignores reports from any other; a second scenario, or a second
+ * build of the same one, starting in the same match fails the next step
+ * with an explanation, since only one device may be placed per test.
+ * `game.ended` releases the lock.
  */
 export class ScenarioTransport implements RuntimeTransport {
   readonly name: string;
   private reports: Report[] = [];
   private cursor = 0;
+  /** The scenario (id and plan fingerprint) this match is locked onto. */
+  private locked: { id: string; plan?: string } | undefined;
+  private conflict: string | undefined;
   private waiters = new Set<() => void>();
 
   constructor(
@@ -57,11 +85,34 @@ export class ScenarioTransport implements RuntimeTransport {
   /** Exposed for tests: feeds one event through the step tracker. */
   observe(event: RuntimeEvent): void {
     const p = event.payload;
+    if (event.type === "game.ended") {
+      this.locked = undefined;
+      this.conflict = undefined;
+      return;
+    }
+    if (!event.type.startsWith("scenario.")) return;
+    const id = typeof p["scenario"] === "string" ? p["scenario"] : "";
     if (event.type === "scenario.started") {
-      this.reports = [];
-      this.cursor = 0;
+      const plan = typeof p["plan"] === "string" ? p["plan"] : undefined;
+      if (this.locked && this.locked.id !== id) {
+        this.conflict = `scenario devices for '${this.locked.id || "(untagged)"}' and '${id || "(untagged)"}' both run in this match; place one scenario device per test`;
+      } else if (this.locked && this.locked.plan !== plan) {
+        this.conflict = `two builds of scenario '${id}' (plans ${this.locked.plan ?? "?"} and ${plan ?? "?"}) run in this match; remove the stale device and regenerate it with 'uefn scenario'`;
+      } else {
+        // First start in this match, or a restart of the same device.
+        this.locked = { id, ...(plan !== undefined ? { plan } : {}) };
+        this.reports = [];
+        this.cursor = 0;
+      }
+    } else if (this.locked && this.locked.id !== id) {
+      return;
     } else if (event.type === "scenario.step" && typeof p["index"] === "number") {
-      this.reports.push({ index: p["index"], action: String(p["action"] ?? ""), ...(typeof p["player"] === "string" ? { player: p["player"] } : {}) });
+      this.reports.push({
+        index: p["index"],
+        action: String(p["action"] ?? ""),
+        ...(typeof p["player"] === "string" ? { player: p["player"] } : {}),
+        ...(typeof p["arg"] === "string" ? { arg: p["arg"] } : {}),
+      });
     } else if (event.type === "scenario.failed" && typeof p["index"] === "number") {
       this.reports.push({ index: p["index"], action: "", failed: String(p["reason"] ?? "step failed") });
     } else {
@@ -73,7 +124,9 @@ export class ScenarioTransport implements RuntimeTransport {
   async command(command: RuntimeCommand): Promise<CommandResult> {
     if (!(SCENARIO_ACTIONS as readonly string[]).includes(command.type)) return this.inner.command(command);
     const expected = this.cursor;
+    if (this.conflict) return { ok: false, error: this.conflict };
     const report = await this.next(expected);
+    if (this.conflict) return { ok: false, error: this.conflict };
     if (!report) {
       return {
         ok: false,
@@ -88,6 +141,13 @@ export class ScenarioTransport implements RuntimeTransport {
     const player = "player" in command ? command.player : undefined;
     if (player !== undefined && report.player !== undefined && report.player !== player) {
       return { ok: false, error: `scenario step ${expected} acted on '${report.player}' but the test expected '${player}'` };
+    }
+    const arg = commandArg(command);
+    if (arg !== undefined && report.arg !== undefined && report.arg !== arg) {
+      return {
+        ok: false,
+        error: `scenario step ${expected} (${command.type}) ran with '${report.arg}' in game but the test sent '${arg}'; the placed device is stale, regenerate it with 'uefn scenario'`,
+      };
     }
     return { ok: true };
   }

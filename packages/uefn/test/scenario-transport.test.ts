@@ -38,3 +38,34 @@ test("a device-side failure or a missing report fails the step", async () => {
   // Other commands still go to the wrapped transport.
   assert.equal((await t.command({ type: "start_game" })).unsupported, true);
 });
+
+test("reports from a second scenario device are ignored and fail the next step", async () => {
+  const t = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  t.observe(ev("scenario.started", { scenario: "mine", plan: "aaa", steps: 1 }));
+  t.observe(ev("scenario.step", { scenario: "other", index: 0, action: "teleport", player: "player1", arg: "X" }));
+  t.observe(ev("scenario.step", { scenario: "mine", index: 0, action: "spawn_player", player: "player1", arg: "" }));
+  assert.deepEqual(await t.command({ type: "spawn_player", player: "player1" }), { ok: true });
+  t.observe(ev("scenario.started", { scenario: "other", plan: "bbb", steps: 1 }));
+  const conflict = await t.command({ type: "damage_player", player: "player1", amount: 5 });
+  assert.match(conflict.error!, /'mine' and 'other' both run in this match; place one scenario device per test/);
+  // A new match releases the lock.
+  t.observe(ev("game.ended", {}));
+  t.observe(ev("scenario.started", { scenario: "other", plan: "bbb", steps: 1 }));
+  t.observe(ev("scenario.step", { scenario: "other", index: 0, action: "damage_player", player: "player1", arg: "5" }));
+  assert.deepEqual(await t.command({ type: "damage_player", player: "player1", amount: 5 }), { ok: true });
+});
+
+test("a stale device is detected by its plan fingerprint or step argument", async () => {
+  const t = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  t.observe(ev("scenario.started", { scenario: "s", plan: "new", steps: 1 }));
+  t.observe(ev("scenario.started", { scenario: "s", plan: "old", steps: 1 }));
+  assert.match((await t.command({ type: "spawn_player", player: "player1" })).error!, /two builds of scenario 's' \(plans new and old\)/);
+
+  const u = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  u.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 2 }));
+  u.observe(ev("scenario.step", { scenario: "s", index: 0, action: "teleport", player: "player1", arg: "A" }));
+  u.observe(ev("scenario.step", { scenario: "s", index: 1, action: "damage_player", player: "player1", arg: "25" }));
+  assert.deepEqual(await u.command({ type: "teleport", player: "player1", location: "A" }), { ok: true });
+  const stale = await u.command({ type: "damage_player", player: "player1", amount: 30 });
+  assert.match(stale.error!, /ran with '25' in game but the test sent '30'; the placed device is stale/);
+});
