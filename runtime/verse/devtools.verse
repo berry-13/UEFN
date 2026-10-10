@@ -77,9 +77,10 @@ devtools_emitter<public> := class:
     var NextSeq<private>:int = 0
 
     # Announces that the runtime is live. DevTools waits for this line in the
-    # WAITING_FOR_RUNTIME stage before running any test.
+    # WAITING_FOR_RUNTIME stage before running any test. It carries SeqStart,
+    # so each emitter's hello has its own event id.
     Hello<public>()<transacts>:void =
-        Logger.Print("[UEFN-DEVTOOLS]|1|H|0|0.1.0")
+        Logger.Print("[UEFN-DEVTOOLS]|1|H|{SeqStart}|0.1.0")
 
     # Emits an event and returns its sequence number for use as a parent.
     Emit<public>(EventType:string, Fields:[]string)<transacts>:int =

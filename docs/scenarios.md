@@ -17,7 +17,8 @@ writes `devtools_scenario_<test-id>.verse` into `scenario.output`
 (default `./Content/DevTools/Generated`). Then:
 
 1. Compile (`uefn compile`) and place one device of that class in the level
-   (drag it in, or `DeviceToolset/PlaceDevice` over MCP).
+   (drag it in, or `DeviceToolset/PlaceDevice` over MCP). Place exactly one
+   scenario device per test run: remove the devices of other tests.
 2. Set `scenario.enabled: true` so player actions are routed to the device.
 3. `uefn test <test-id>`. Regenerate whenever the test's steps change.
 
@@ -26,6 +27,7 @@ scenario:
   enabled: true
   locations:            # named positions for teleport / enter / leave
     Sky: [0, 0, 3000]
+    Zone.outside: [-2000, 0, 0]   # optional: where `leave: { area: Zone }` goes
   start_delay: 3s       # after the match starts, before the first step
   step_timeout: 60s     # how long the host waits for each step's report
 ```
@@ -33,13 +35,26 @@ scenario:
 `locations` falls back to `simulated.devices[].location`, so a test written
 for the simulator can reuse its device positions.
 
+`uefn scenario` refuses to overwrite a generated file that belongs to a
+different test. Ids such as `foo-bar` and `foo_bar` map to the same class
+name; give one of them a distinct id, or use `--out`.
+
+The test must `start_game` before its first player action (normally in
+`setup`), and may not start or end the match after it. The device runs when
+the match begins and replays its whole plan on every match start, so a
+match it was not started by the test would report before the test began
+(and the test's observed state would miss those events), and a restart
+between actions would replay the earlier ones. Both are refused at
+generation time. `start_delay` only spaces the first step from the match
+start; it is not a synchronisation point with the host.
+
 ## Step mapping
 
 | YAML step | In the device | Reported events |
 |---|---|---|
 | `spawn_player: { id }` | binds the id to the next player in `GetPlayers()` order | `player.spawned` (with position), `scenario.step` |
-| `teleport` / `enter` | `TeleportTo` the named location | `player.moved` (actual position), `scenario.step` |
-| `leave` | `TeleportTo` 2000 units away from the area | `player.moved`, `scenario.step` |
+| `teleport` / `enter` | `TeleportTo` the named location; first a spawn step if the player has not spawned yet or was eliminated, as the host does | `player.moved` (actual position), `scenario.step` |
+| `leave` | `TeleportTo` `<area>.outside` if configured, else 2000 units along +X from the area's position (not checked to be outside the area) | `player.moved`, `scenario.step` |
 | `damage: { amount }` | `Damage(amount)` | `player.state_changed` (health, shield), `scenario.step` |
 | `eliminate` | `Damage` large enough to eliminate | `player.state_changed`, `player.eliminated` when health reads 0, `scenario.step` |
 | `wait` | `Sleep` | none |
@@ -64,10 +79,25 @@ player moved.
 - Steps run in order on the device's own clock. The host checks each report
   in order and fails on a mismatch (`was 'damage_player' in game but the
   test sent 'teleport'`), a device-side failure, or a timeout.
+- Every scenario event carries the test id (`scenario`); `scenario.started`
+  also carries a fingerprint of the plan (`plan`), and each `scenario.step`
+  the argument it was generated from (`arg`: location, area, damage amount,
+  eliminator). The host locks onto the first scenario that starts in a match
+  and ignores the others' reports, but fails the next step if a second
+  scenario, or a second build of the same one, starts in that match. A step
+  whose argument differs from what the test sends fails as a stale device:
+  regenerate and recompile. `game.ended` releases the lock.
+- A player's character is captured at the player's first step and reused,
+  so players joining or leaving later do not shift who a step acts on. After
+  an `eliminate`, the next `teleport` / `enter` adds a spawn step that
+  reports the captured character: the island must respawn the player, so put
+  a `wait` before it.
 - Because `wait_for` is not mirrored, put a `wait` before an action that
   must happen after an outcome.
 - Teams in `spawn_player` are not enforced; players join by island settings.
 - `eliminate.by` is not attributed (the damage has no instigator).
 - The device uses its own emitter with `SeqStart := 1000000`, so its event
-  ids never collide with the island's emitter.
+  ids never collide with the island's emitter. Its `Hello` carries that
+  offset too (`rt_1000000`), so it adds a second `session.ready` rather than
+  replacing the island's.
 - Only YAML tests can be turned into scenarios; TypeScript tests are code.

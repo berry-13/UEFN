@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { parseDuration, type Vector3 } from "@uefn-devtools/protocol";
 import { parseAllDocuments } from "yaml";
@@ -14,6 +15,10 @@ import { YamlTestSchema, type Step, type YamlTest } from "./yaml.ts";
  * (`ScenarioTransport`). Waits run in the device too; `wait_for` does not
  * (the device cannot see DevTools events), so put a `wait` before an action
  * that must follow an outcome.
+ *
+ * Every scenario event carries the test id (`scenario`), and
+ * `scenario.started` carries a fingerprint of the plan (`plan`), so the host
+ * can tell two placed devices, or a stale build of one, apart.
  */
 
 export interface ScenarioOptions {
@@ -21,7 +26,7 @@ export interface ScenarioOptions {
   locations: Record<string, Vector3>;
   /** Delay after the match starts before the first step. */
   startDelayMs: number;
-  /** Test id, used for the class and file names. */
+  /** Test id: names the class and file, and tags every scenario event. */
   id: string;
 }
 
@@ -31,6 +36,12 @@ export interface ScenarioPlanStep {
   /** The runtime command the host sends for this step. */
   action: "spawn_player" | "teleport" | "leave_area" | "damage_player" | "eliminate_player";
   player: string;
+  /**
+   * The command argument the step was generated from (teleport location,
+   * left area, damage amount, eliminator), reported as `arg` so the host can
+   * reject a device built from an older version of the test.
+   */
+  arg: string;
   description: string;
 }
 
@@ -39,17 +50,28 @@ export interface GeneratedScenario {
   fileName: string;
   verse: string;
   plan: ScenarioPlanStep[];
+  /** Short hash of the plan, reported in `scenario.started`. */
+  fingerprint: string;
   warnings: string[];
 }
 
 export class ScenarioError extends Error {}
 
-/** Distance a `leave` step moves the player away from the area, in Unreal units. */
+/**
+ * Distance a `leave` step moves the player away from the area, in Unreal
+ * units, when scenario.locations has no `<area>.outside` position.
+ */
 const LEAVE_OFFSET = 2000;
 /** Damage large enough to eliminate any default character. */
 const ELIMINATE_DAMAGE = 100000;
 /** Scenario events use their own sequence range (see `SeqStart` in devtools.verse). */
 const SEQ_START = 1_000_000;
+
+/** Hash of what the device does, so a stale device build is detected. */
+export function scenarioFingerprint(plan: readonly ScenarioPlanStep[]): string {
+  const text = plan.map((s) => [s.index, s.action, s.player, s.arg].join("\u0000")).join("\n");
+  return createHash("sha256").update(text).digest("hex").slice(0, 12);
+}
 
 export function scenarioClassName(id: string): string {
   return `devtools_scenario_${id.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "test"}`;
@@ -70,10 +92,16 @@ function verseVector([x, y, z]: Vector3): string {
 
 export function generateScenario(test: YamlTest, options: ScenarioOptions): GeneratedScenario {
   const className = scenarioClassName(options.id);
+  const scenarioId = verseString(options.id);
   const players = new Map<string, number>();
+  /** Slots whose character the device has captured (at the slot's first step). */
+  const bound = new Set<number>();
+  /** Players the host considers alive: a teleport / enter of anyone else spawns them first. */
+  const live = new Set<string>();
   const plan: ScenarioPlanStep[] = [];
   const warnings: string[] = [];
   const body: string[] = [];
+  let lastLifecycle: "start_game" | "end_game" | undefined;
 
   const slot = (id: string | number): { name: string; index: number } => {
     const name = playerId(id);
@@ -91,33 +119,66 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
     }
     return found;
   };
-  const confirm = (action: ScenarioPlanStep["action"], player: string, description: string, indent: string): string[] => {
+  const confirm = (action: ScenarioPlanStep["action"], player: string, arg: string, description: string, indent: string): string[] => {
     const index = plan.length;
-    plan.push({ index, action, player, description });
-    return [`${indent}Step(${index}, ${verseString(action)}, ${verseString(player)})`];
+    plan.push({ index, action, player, arg, description });
+    return [`${indent}Step(${index}, ${verseString(action)}, ${verseString(player)}, ${verseString(arg)})`];
   };
-  const withCharacter = (index: number, step: number, lines: string[]): string[] => [
-    `        if (Character := CharacterAt[${index}]):`,
-    ...lines,
-    `        else:`,
-    `            Fail(${step}, "player ${index + 1} has no character")`,
-    `            return`,
-  ];
-  const moveTo = (player: { name: string; index: number }, position: Vector3, action: ScenarioPlanStep["action"], description: string) => {
+  // A slot's character is captured at its first step and reused afterwards,
+  // so a player joining or leaving later cannot shift who a step acts on.
+  // Slots are numbered by first appearance, so slot N is always captured
+  // after slots 0..N-1 and lands at index N of Characters.
+  const withCharacter = (index: number, step: number, lines: string[]): string[] => {
+    if (bound.has(index)) {
+      return [
+        `        if (Character := Characters[${index}]):`,
+        ...lines,
+        `        else:`,
+        `            Fail(${step}, "player ${index + 1} is not bound")`,
+        `            return`,
+      ];
+    }
+    bound.add(index);
+    return [
+      `        if (Character := CharacterAt[${index}]):`,
+      `            set Characters += array{Character}`,
+      ...lines,
+      `        else:`,
+      `            Fail(${step}, "player ${index + 1} has no character")`,
+      `            return`,
+    ];
+  };
+  const spawn = (p: { name: string; index: number }, description: string) => {
+    const step = plan.length;
+    body.push(`        # ${step}: ${description}`);
+    body.push(
+      ...withCharacter(p.index, step, [
+        `            Emitter.Emit("player.spawned", array{DevToolsString("player", ${verseString(p.name)}), DevToolsVector("position", Character.GetTransform().Translation)})`,
+        ...confirm("spawn_player", p.name, "", description, "            "),
+      ]),
+    );
+    live.add(p.name);
+  };
+  // The host's teleport / enter spawn a player that is not alive in its
+  // observed state (PlayerHandle.ensureSpawned), so the device plans that spawn too.
+  const ensureSpawned = (p: { name: string; index: number }, before: string) => {
+    if (!live.has(p.name)) spawn(p, `${p.name} is player ${p.index + 1} (implicit spawn before ${before})`);
+  };
+  const moveTo = (player: { name: string; index: number }, position: Vector3, action: ScenarioPlanStep["action"], arg: string, description: string) => {
     const step = plan.length;
     body.push(`        # ${step}: ${description}`);
     body.push(
       ...withCharacter(player.index, step, [
         `            if (Character.TeleportTo[${verseVector(position)}, IdentityRotation()]):`,
         `                Emitter.Emit("player.moved", array{DevToolsString("player", ${verseString(player.name)}), DevToolsVector("position", Character.GetTransform().Translation)})`,
-        ...confirm(action, player.name, description, "                "),
+        ...confirm(action, player.name, arg, description, "                "),
         `            else:`,
         `                Fail(${step}, "teleport refused")`,
         `                return`,
       ]),
     );
   };
-  const damage = (player: { name: string; index: number }, amount: number, action: ScenarioPlanStep["action"], description: string) => {
+  const damage = (player: { name: string; index: number }, amount: number, action: ScenarioPlanStep["action"], arg: string, description: string) => {
     const step = plan.length;
     body.push(`        # ${step}: ${description}`);
     body.push(
@@ -131,45 +192,70 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
               `                Emitter.Emit("player.eliminated", array{DevToolsString("player", ${verseString(player.name)})})`,
             ]
           : []),
-        ...confirm(action, player.name, description, "            "),
+        ...confirm(action, player.name, arg, description, "            "),
       ]),
     );
   };
 
   for (const s of [...test.setup, ...test.steps] as Step[]) {
-    if (s === "start_game" || s === "end_game" || (typeof s === "object" && ("start_game" in s || "end_game" in s))) {
-      // The host starts and ends matches over MCP; the device runs inside the match.
+    const lifecycle =
+      s === "start_game" || (typeof s === "object" && "start_game" in s)
+        ? "start_game"
+        : s === "end_game" || (typeof s === "object" && "end_game" in s)
+          ? "end_game"
+          : undefined;
+    if (lifecycle) {
+      // The host starts and ends matches over MCP; the device runs inside one
+      // match and replays its whole plan on every match start, so a match
+      // boundary between player actions would desynchronise host and device.
+      if (plan.length > 0) {
+        throw new ScenarioError(
+          `${lifecycle} after the first player action is not supported: the device replays its whole plan on every match start; split the test at the match boundary`,
+        );
+      }
+      lastLifecycle = lifecycle;
       continue;
+    }
+    if (typeof s !== "object") continue;
+    const isAction = ["spawn_player", "teleport", "enter", "leave", "damage", "eliminate"].some((k) => k in s);
+    if (isAction && plan.length === 0 && lastLifecycle !== "start_game") {
+      // The device runs when the match begins. If the test does not start the
+      // match, the device's reports can predate the test and its observed state.
+      throw new ScenarioError(`test '${options.id}' must start_game before its first player action, so the device runs inside the test`);
     }
     if ("spawn_player" in s) {
       const p = slot(s.spawn_player.id);
       if (s.spawn_player.team !== undefined) warnings.push(`spawn_player ${p.name}: team ${s.spawn_player.team} is not enforced; players join by island settings`);
-      const step = plan.length;
-      const description = `${p.name} is player ${p.index + 1}`;
-      body.push(`        # ${step}: ${description}`);
-      body.push(
-        ...withCharacter(p.index, step, [
-          `            Emitter.Emit("player.spawned", array{DevToolsString("player", ${verseString(p.name)}), DevToolsVector("position", Character.GetTransform().Translation)})`,
-          ...confirm("spawn_player", p.name, description, "            "),
-        ]),
-      );
+      spawn(p, `${p.name} is player ${p.index + 1}`);
     } else if ("teleport" in s) {
       const p = slot(s.teleport.player);
-      moveTo(p, location(s.teleport.location, "teleport"), "teleport", `teleport ${p.name} to ${s.teleport.location}`);
+      const position = location(s.teleport.location, "teleport");
+      ensureSpawned(p, "teleport");
+      moveTo(p, position, "teleport", s.teleport.location, `teleport ${p.name} to ${s.teleport.location}`);
     } else if ("enter" in s) {
       const p = slot(s.enter.player);
-      moveTo(p, location(s.enter.area, "enter"), "teleport", `${p.name} enters ${s.enter.area}`);
+      const position = location(s.enter.area, "enter");
+      ensureSpawned(p, "enter");
+      moveTo(p, position, "teleport", s.enter.area, `${p.name} enters ${s.enter.area}`);
     } else if ("leave" in s) {
       const p = slot(s.leave.player);
-      const [x, y, z] = location(s.leave.area, "leave");
-      moveTo(p, [x + LEAVE_OFFSET, y, z], "leave_area", `${p.name} leaves ${s.leave.area}`);
+      const outside = options.locations[`${s.leave.area}.outside`];
+      let position: Vector3;
+      if (outside) {
+        position = outside;
+      } else {
+        const [x, y, z] = location(s.leave.area, "leave");
+        position = [x + LEAVE_OFFSET, y, z];
+      }
+      moveTo(p, position, "leave_area", s.leave.area, `${p.name} leaves ${s.leave.area}`);
     } else if ("damage" in s) {
       const p = slot(s.damage.player);
-      damage(p, s.damage.amount, "damage_player", `damage ${p.name} by ${s.damage.amount}`);
+      damage(p, s.damage.amount, "damage_player", String(s.damage.amount), `damage ${p.name} by ${s.damage.amount}`);
     } else if ("eliminate" in s) {
       const p = slot(s.eliminate.player);
       if (s.eliminate.by) warnings.push(`eliminate ${p.name}: 'by ${s.eliminate.by}' is not attributed; the damage has no instigator`);
-      damage(p, ELIMINATE_DAMAGE, "eliminate_player", `eliminate ${p.name}`);
+      damage(p, ELIMINATE_DAMAGE, "eliminate_player", s.eliminate.by ?? "", `eliminate ${p.name}`);
+      live.delete(p.name);
     } else if ("wait" in s) {
       const seconds = parseDuration(s.wait) / 1000;
       body.push(`        Sleep(${verseFloat(seconds)})`);
@@ -180,10 +266,11 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
     }
   }
   if (plan.length === 0) throw new ScenarioError(`test '${options.id}' has no player actions to run in a scenario`);
+  const fingerprint = scenarioFingerprint(plan);
 
   const verse = [
-    `# Generated by \`uefn scenario ${options.id}\` from "${test.name.replace(/\r?\n/g, " ")}". Do not edit; regenerate instead.`,
-    `# Place one ${className} device in the level. It needs devtools.verse (runtime/verse).`,
+    `# Generated by \`uefn scenario ${options.id.replace(/[\r\n`]/g, " ")}\` from "${test.name.replace(/\r?\n/g, " ")}". Do not edit; regenerate instead.`,
+    `# Place exactly one ${className} device in the level and no other scenario device. It needs devtools.verse (runtime/verse).`,
     `using { /Fortnite.com/Characters }`,
     `using { /Fortnite.com/Devices }`,
     `using { /Fortnite.com/Game }`,
@@ -192,39 +279,74 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
     ``,
     `${className} := class(creative_device):`,
     `    Emitter:devtools_emitter = devtools_emitter{SeqStart := ${SEQ_START}}`,
+    `    # Characters bound to player slots, captured at each slot's first step.`,
+    `    var Characters:[]fort_character = array{}`,
     ``,
     `    OnBegin<override>()<suspends>:void =`,
     `        Emitter.Hello()`,
     `        Sleep(${verseFloat(options.startDelayMs / 1000)})`,
-    `        Emitter.Emit("scenario.started", array{DevToolsInt("steps", ${plan.length})})`,
+    `        Emitter.Emit("scenario.started", array{DevToolsString("scenario", ${scenarioId}), DevToolsString("plan", ${verseString(fingerprint)}), DevToolsInt("steps", ${plan.length})})`,
     ...body,
-    `        Emitter.Emit("scenario.completed", array{DevToolsInt("steps", ${plan.length})})`,
+    `        Emitter.Emit("scenario.completed", array{DevToolsString("scenario", ${scenarioId}), DevToolsInt("steps", ${plan.length})})`,
     ``,
     `    CharacterAt(Index:int)<decides><transacts>:fort_character =`,
     `        GetPlayspace().GetPlayers()[Index].GetFortCharacter[]`,
     ``,
-    `    Step(Index:int, Action:string, Player:string)<transacts>:void =`,
-    `        Emitter.Emit("scenario.step", array{DevToolsInt("index", Index), DevToolsString("action", Action), DevToolsString("player", Player)})`,
+    `    Step(Index:int, Action:string, Player:string, Arg:string)<transacts>:void =`,
+    `        Emitter.Emit("scenario.step", array{DevToolsString("scenario", ${scenarioId}), DevToolsInt("index", Index), DevToolsString("action", Action), DevToolsString("player", Player), DevToolsString("arg", Arg)})`,
     ``,
     `    Fail(Index:int, Reason:string)<transacts>:void =`,
-    `        Emitter.Emit("scenario.failed", array{DevToolsInt("index", Index), DevToolsString("reason", Reason)})`,
+    `        Emitter.Emit("scenario.failed", array{DevToolsString("scenario", ${scenarioId}), DevToolsInt("index", Index), DevToolsString("reason", Reason)})`,
     ``,
     `    ReportHealth(Player:string, Character:fort_character)<transacts>:void =`,
     `        Emitter.Emit("player.state_changed", array{DevToolsString("player", Player), DevToolsFloat("health", Character.GetHealth()), DevToolsFloat("shield", Character.GetShield())})`,
     ``,
   ].join("\n");
 
-  return { className, fileName: `${className}.verse`, verse, plan, warnings };
+  return { className, fileName: `${className}.verse`, verse, plan, fingerprint, warnings };
 }
 
-/** Finds a YAML test by id. YAML files are only parsed; no project code runs. */
+function rawTestId(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const { id, name } = raw as { id?: unknown; name?: unknown };
+  if (typeof id === "string") return id;
+  return typeof name === "string" ? slugify(name) : undefined;
+}
+
+/**
+ * Finds a YAML test by id. YAML files are only parsed; no project code runs.
+ * A file holding the test is validated as a whole, as `loadYamlTests` does,
+ * so a scenario is never generated for a test the runner cannot load.
+ */
 export async function findYamlTest(testsDir: string, id: string): Promise<{ test: YamlTest; file: string } | undefined> {
   const files = (await findTestFiles(testsDir)).filter((f) => /\.ya?ml$/.test(f));
+  /** Documents too broken to read an id from: one of them may be the test. */
+  const unreadable: string[] = [];
   for (const file of files) {
-    for (const doc of parseAllDocuments(await readFile(file, "utf8"))) {
+    const docs = parseAllDocuments(await readFile(file, "utf8"));
+    const ids = docs.map((doc) => rawTestId(toJS(doc)));
+    for (const [i, doc] of docs.entries()) if (doc.errors.length > 0 && ids[i] === undefined) unreadable.push(`${file} (document ${i + 1}): ${doc.errors[0]!.message}`);
+    if (!ids.includes(id)) continue;
+    let found: YamlTest | undefined;
+    for (const [i, doc] of docs.entries()) {
+      if (doc.errors.length > 0) throw new ScenarioError(`${file} (document ${i + 1}): ${doc.errors[0]!.message}`);
       const parsed = YamlTestSchema.safeParse(doc.toJS());
-      if (parsed.success && (parsed.data.id ?? slugify(parsed.data.name)) === id) return { test: parsed.data, file };
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map((x) => `  ${x.path.join(".")}: ${x.message}`).join("\n");
+        throw new ScenarioError(`${file} (document ${i + 1}) is not a valid test:\n${issues}`);
+      }
+      if (!found && (parsed.data.id ?? slugify(parsed.data.name)) === id) found = parsed.data;
     }
+    if (found) return { test: found, file };
   }
+  if (unreadable.length > 0) throw new ScenarioError(`no YAML test with id '${id}', and some YAML could not be parsed:\n  ${unreadable.join("\n  ")}`);
   return undefined;
+}
+
+function toJS(doc: { toJS(): unknown }): unknown {
+  try {
+    return doc.toJS();
+  } catch {
+    return undefined;
+  }
 }
