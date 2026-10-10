@@ -146,7 +146,8 @@ export async function runDoctor(source?: DevToolsEngine | LoadedConfig, options:
   }
 
   const { config, root } = loaded;
-  const adapter = options.adapter ?? config.adapter;
+  const engineAdapter = source && "loaded" in source ? source.adapter.name : undefined;
+  const adapter = options.adapter ?? (engineAdapter === "simulated" || engineAdapter === "mcp" ? engineAdapter : config.adapter);
   add(
     loaded.file
       ? { id: "config.found", title: "Configuration file", status: "pass", detail: relative(root, loaded.file) || loaded.file }
@@ -272,8 +273,17 @@ export async function runDoctor(source?: DevToolsEngine | LoadedConfig, options:
   let probe = resultsDir;
   while (!(await isDir(probe)) && dirname(probe) !== probe) probe = dirname(probe);
   const writable = await access(probe, constants.W_OK).then(() => true, () => false);
+  const blockedByFile = !(await isDir(resultsDir)) && (await stat(resultsDir).then(() => true, () => false));
   add(
-    writable
+    blockedByFile
+      ? {
+          id: "results.writable",
+          title: "Results directory writable",
+          status: "fail",
+          detail: `${resultsDir} exists but is not a directory`,
+          fix: "remove the file or change paths.results in the config",
+        }
+      : writable
       ? { id: "results.writable", title: "Results directory writable", status: "pass", detail: relative(root, resultsDir) || "." }
       : {
           id: "results.writable",
@@ -444,6 +454,15 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
   } else {
     const abs = resolve(root, logPath);
     if (await isFile(abs)) add({ id: "runtime.log", title: "Runtime log path", status: "pass", detail: abs });
+    else if (await isDir(abs)) {
+      add({
+        id: "runtime.log",
+        title: "Runtime log path",
+        status: "fail",
+        detail: `${abs} is a directory; runtime.log_path must be a file`,
+        fix: "point runtime.log_path at the UEFN output log file, not its directory",
+      });
+    }
     else if (await isDir(dirname(abs))) {
       add({
         id: "runtime.log",

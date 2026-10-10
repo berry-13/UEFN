@@ -567,8 +567,8 @@ export async function buildDepsGraph(loaded: LoadedConfig): Promise<DepsGraph> {
     }
 
     for (const em of scan.emits) {
-      const id = em.probe ? `probe:${em.name}` : `event:${em.name}`;
-      node({ id, kind: "event", label: em.probe ? `probe ${em.name}` : em.name, file: scan.file, line: em.line });
+      const id = em.probe ? `probe:${em.name}` : `event:${normalizeEventName(em.name)}`;
+      node({ id, kind: "event", label: em.probe ? `probe ${em.name}` : normalizeEventName(em.name), file: scan.file, line: em.line });
       edge(ownerId(em.owner), id, "emits");
     }
 
