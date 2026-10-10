@@ -22,7 +22,7 @@ export const list: Command = {
     try {
       const testsDir = resolve(engine.root, engine.config.paths.tests);
       const { tests, errors } = await loadTests(await findTestFiles(testsDir));
-      const selected = positionals[0] ? filterTests(tests, positionals[0]) : tests;
+      const selected = filterTests(tests, positionals[0]);
       const sources = new Map<string, string>();
       const out: ListedTest[] = [];
       for (const t of selected) {

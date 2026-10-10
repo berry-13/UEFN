@@ -2,12 +2,18 @@ import type { DevToolsEngine } from "@uefn-devtools/core";
 import type { ReporterOptions, RunOptions } from "@uefn-devtools/test";
 import { createTerminalDebugger } from "./debugger.ts";
 import { HeadedView } from "./headed-view.ts";
-import { UsageError, type Values } from "./shared.ts";
+import { UsageError, list, type Values } from "./shared.ts";
 
 /** Validates `--headed` / `--debug` before anything starts. */
 export function assertInteractive(values: Values): void {
   if (values.json && (values.headed || values.debug)) {
     throw new UsageError("--headed and --debug cannot be combined with --json");
+  }
+  if (values.headed || values.debug) {
+    const names = (list(values, "reporter") ?? []).flatMap((v) => v.split(",")).map((v) => v.trim());
+    if (names.includes("json") && !values.output) {
+      throw new UsageError("--reporter json writes to the terminal; pass --output <file> when using --headed or --debug");
+    }
   }
   if (values.debug && !(process.stdin.isTTY && process.stdout.isTTY)) {
     throw new UsageError("--debug needs an interactive terminal (stdin and stdout must be a TTY)");

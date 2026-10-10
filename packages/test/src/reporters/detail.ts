@@ -16,7 +16,7 @@ export function failureDetail(attempt: TestAttempt): FailureDetail {
     return {
       ...base,
       subject: assertion.description,
-      message: `expected ${JSON.stringify(assertion.expected)}, received ${JSON.stringify(assertion.received)}`,
+      message: assertion.message ?? `expected ${JSON.stringify(assertion.expected)}, received ${JSON.stringify(assertion.received)}`,
     };
   }
   const step = attempt.steps.find((s) => !s.passed);
