@@ -212,14 +212,20 @@ export class GameFixture {
     await this.ctx.step("Game started", async () => {
       const from = this.ctx.engine.events.mark();
       const result = await send(this.ctx, { type: "start_game" });
-      // A match that was already running (UEFN starts one on launch) emits no new event.
-      if (result.noop) return;
+      // A match that was already running (UEFN starts one on launch) emits no
+      // log line; the transport reports it unless the state already shows it.
+      if (result.noop && this.ctx.engine.state.phase === "playing") return;
       await this.ctx.engine.waitForEvent({ type: "game.started" }, { timeoutMs: this.ctx.expectTimeout, fromIndex: from });
     });
   }
 
   async end(): Promise<void> {
-    await this.ctx.step("Game ended", () => send(this.ctx, { type: "end_game" }));
+    await this.ctx.step("Game ended", async () => {
+      const from = this.ctx.engine.events.mark();
+      const result = await send(this.ctx, { type: "end_game" });
+      if (result.noop && this.ctx.engine.state.phase !== "playing") return;
+      await this.ctx.engine.waitForEvent({ type: "game.ended" }, { timeoutMs: this.ctx.expectTimeout, fromIndex: from });
+    });
   }
 
   /** Returns a player handle; the player spawns on first action (or call `.spawn()`). */

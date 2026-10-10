@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { CommandResult, CompileResult, DeviceInfo, Diagnostic, RuntimeCommand, RuntimeEvent, SessionStatus } from "@uefn-devtools/protocol";
 import { DevToolsConfig } from "@uefn-devtools/protocol";
 import type {
@@ -24,12 +25,25 @@ export interface McpAdapterOptions {
   logPath?: string;
   /** Player actions are performed by a generated in-game scenario device (docs/scenarios.md). */
   scenario?: { stepTimeoutMs: number };
+  /** How often a session that is still starting is polled before deciding whether to launch one. */
+  sessionPollMs?: number;
 }
+
+/** Log bytes searched for the hello of a session that was already running. */
+const BACKFILL_BYTES = 4 * 1024 * 1024;
 
 interface ToolOutput {
   isError: boolean;
   text: string;
   json?: unknown;
+}
+
+/** What `describe_toolset` said about one toolset. */
+interface DescribedToolset {
+  exists: boolean;
+  /** Tool names found in a structured answer; absent when the shape was not recognised. */
+  names?: Set<string>;
+  text: string;
 }
 
 /**
@@ -45,13 +59,23 @@ export class McpUefnAdapter implements UEFNAdapter {
   private client?: Client;
   private mcpTransport?: Transport;
   private connected = false;
+  private connecting?: Promise<void>;
   private tools: { name: string; description?: string; inputSchema?: { properties?: Record<string, unknown> } }[] = [];
+  private toolsets = new Map<string, DescribedToolset>();
   private session?: { id: string; transport: RuntimeTransport };
 
   constructor(private readonly options: McpAdapterOptions) {}
 
-  async connect(): Promise<void> {
-    if (this.connected) return;
+  /** Concurrent callers share one connection attempt instead of each opening a transport. */
+  connect(): Promise<void> {
+    if (this.connected) return Promise.resolve();
+    this.connecting ??= this.open().finally(() => {
+      this.connecting = undefined;
+    });
+    return this.connecting;
+  }
+
+  private async open(): Promise<void> {
     const { command, args, url } = this.options.mcp;
     const transport = url
       ? new StreamableHTTPClientTransport(new URL(url))
@@ -71,6 +95,7 @@ export class McpUefnAdapter implements UEFNAdapter {
         ...(t.description ? { description: t.description } : {}),
         ...(t.inputSchema ? { inputSchema: t.inputSchema as { properties?: Record<string, unknown> } } : {}),
       }));
+      await this.describeMappedToolsets(client);
       this.connected = true;
     } catch (error) {
       await this.disconnect().catch(() => {});
@@ -86,6 +111,7 @@ export class McpUefnAdapter implements UEFNAdapter {
     this.client = undefined;
     this.mcpTransport = undefined;
     this.connected = false;
+    this.toolsets.clear();
     try {
       await client?.close();
     } finally {
@@ -102,7 +128,10 @@ export class McpUefnAdapter implements UEFNAdapter {
     });
   }
 
-  /** Runs a mapped game command; used by {@link McpCommandTransport}. */
+  /**
+   * Runs a mapped game command; used by {@link McpCommandTransport}, which
+   * turns a no-op into the lifecycle event the log would have shown.
+   */
   async gameCommand(key: "start_game" | "end_game"): Promise<CommandResult> {
     // UEFN auto-starts the match on launch by default, and refuses StartGame
     // while one runs ("not in a startable state"); seen live on 42.30. With
@@ -117,11 +146,55 @@ export class McpUefnAdapter implements UEFNAdapter {
    * True when `mapping` can be called: a tool listed by name, or
    * `<toolset>/<tool>` on a server in meta-tool mode. UEFN 42.30 lists only
    * `list_toolsets`, `describe_toolset` and `call_tool` and reaches its
-   * toolsets through `call_tool` (seen in a live editor log).
+   * toolsets through `call_tool` (seen in a live editor log). The pair is
+   * checked against the `describe_toolset` answer fetched at connect, so a
+   * typo is not advertised as callable.
    */
   hasTool(mapping: string): boolean {
     if (this.tools.some((t) => t.name === mapping)) return true;
-    return mapping.includes("/") && this.tools.some((t) => t.name === "call_tool");
+    if (!mapping.includes("/") || !this.tools.some((t) => t.name === "call_tool")) return false;
+    const slash = mapping.lastIndexOf("/");
+    const described = this.toolsets.get(mapping.slice(0, slash));
+    // Not described (no describe_toolset, or it timed out): nothing to check against.
+    if (!described) return true;
+    if (!described.exists) return false;
+    const tool = mapping.slice(slash + 1);
+    if (described.names) return described.names.has(tool);
+    // An answer whose shape is not recognised: accept a whole-word mention of the tool.
+    const escaped = tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^A-Za-z0-9_])${escaped}([^A-Za-z0-9_]|$)`).test(described.text);
+  }
+
+  /** Calls `describe_toolset` once for each toolset named in the tool mappings. */
+  private async describeMappedToolsets(client: Client): Promise<void> {
+    this.toolsets.clear();
+    const describe = this.tools.find((t) => t.name === "describe_toolset");
+    if (!describe || !this.tools.some((t) => t.name === "call_tool")) return;
+    const toolsets = new Set(
+      Object.values(this.options.mcp.tools)
+        .filter((m): m is string => typeof m === "string" && m.includes("/") && !this.tools.some((t) => t.name === m))
+        .map((m) => m.slice(0, m.lastIndexOf("/"))),
+    );
+    const keys = Object.keys(describe.inputSchema?.properties ?? {});
+    const key = keys.find((k) => /toolset/i.test(k)) ?? keys[0] ?? "toolset_name";
+    for (const toolset of toolsets) {
+      const result = await client
+        .callTool({ name: "describe_toolset", arguments: { [key]: toolset } }, undefined, { timeout: this.options.mcp.timeout_ms })
+        // A protocol error is an answer (no such toolset); a timeout or a broken connection is not.
+        .catch((error: unknown) =>
+          error instanceof McpError && error.code !== ErrorCode.RequestTimeout && error.code !== ErrorCode.ConnectionClosed
+            ? { isError: true, content: [{ type: "text", text: error.message }] }
+            : undefined,
+        );
+      if (!result) continue;
+      const text = textOf(result.content);
+      if (result.isError === true) {
+        this.toolsets.set(toolset, { exists: false, text });
+        continue;
+      }
+      const names = toolNames(("structuredContent" in result ? result.structuredContent : undefined) ?? parseJson(text));
+      this.toolsets.set(toolset, { exists: true, text, ...(names.size ? { names } : {}) });
+    }
   }
 
   /** `call_tool` arguments, named after the properties its input schema publishes. */
@@ -160,19 +233,8 @@ export class McpUefnAdapter implements UEFNAdapter {
     const result = await this.client.callTool(request, undefined, {
       timeout: this.options.mcp.timeout_ms,
     });
-    const content = Array.isArray(result.content) ? result.content : [];
-    const text = content
-      .filter((c): c is { type: "text"; text: string } => c?.type === "text")
-      .map((c) => c.text)
-      .join("\n");
-    let json: unknown = result.structuredContent;
-    if (json === undefined) {
-      try {
-        json = JSON.parse(text);
-      } catch {
-        json = undefined;
-      }
-    }
+    const text = textOf(result.content);
+    const json: unknown = result.structuredContent ?? parseJson(text);
     return { isError: result.isError === true, text, json };
   }
 
@@ -192,16 +254,18 @@ export class McpUefnAdapter implements UEFNAdapter {
 
   async startSession(options: StartSessionOptions = {}): Promise<AdapterSession> {
     if (this.session) return { id: this.session.id, reused: true };
-    const status = await this.getSessionStatus().catch(() => "none" as const);
+    const status = await this.settledSessionStatus();
     const reused = status === "connected" || status === "playing";
     if (!reused) {
       // No `headed` argument: every UEFN play session launches the Fortnite
       // client (seen in real editor logs), and an unknown argument could make
       // a strictly validated tool reject the call.
-      const out = await this.call("start_session").catch((error: Error) => {
+      const out = await this.call("start_session").catch((error: unknown) => {
         // StartSession blocks until the client is in the match; when UEFN's own
         // launch pipeline stalls (seen live: Versioning failed with "Failed to
-        // resolve validation session"), only a timeout reaches us.
+        // resolve validation session"), only a timeout reaches us. Any other
+        // error is not a stalled launch and is passed on unchanged.
+        if (!(error instanceof McpError && error.code === ErrorCode.RequestTimeout)) throw error;
         throw new Error(
           `UEFN did not finish launching the session (${error.message}). Check UEFN's Session Inspector ` +
             "for the failed stage and close any 'Unable to Play' dialog before retrying.",
@@ -212,12 +276,39 @@ export class McpUefnAdapter implements UEFNAdapter {
     if (!this.options.logPath) {
       throw new Error("runtime.log_path must point at the UEFN output log so runtime events can be observed");
     }
-    const commands = new McpCommandTransport(new LogFileTransport({ path: this.options.logPath, clock: this.clock }), this);
+    // A reused session logged its one-shot hello (and match start) before this
+    // process attached; the log transport replays them from the end of the log.
+    const log = new LogFileTransport({
+      path: this.options.logPath,
+      clock: this.clock,
+      ...(reused ? { backfillBytes: BACKFILL_BYTES } : {}),
+    });
+    const commands = new McpCommandTransport(log, this);
     const transport = this.options.scenario
       ? new ScenarioTransport(commands, { clock: this.clock, stepTimeoutMs: this.options.scenario.stepTimeoutMs })
       : commands;
     this.session = { id: `uefn-${Date.now().toString(36)}`, transport };
     return { id: this.session.id, reused };
+  }
+
+  /**
+   * The session status once UEFN is no longer in the middle of launching
+   * one, so a session that is still connecting is joined rather than started
+   * a second time. Polls for at most `mcp.timeout_ms`.
+   */
+  private async settledSessionStatus(): Promise<SessionStatus | "none"> {
+    const deadline = this.clock.now() + this.options.mcp.timeout_ms;
+    for (;;) {
+      const status = await this.getSessionStatus().catch(() => "none" as const);
+      if (status !== "starting") return status;
+      if (this.clock.now() >= deadline) {
+        throw new Error(
+          `UEFN's session was still starting after ${Math.round(this.options.mcp.timeout_ms / 1000)}s; ` +
+            "let it finish connecting (or stop it in UEFN) and retry",
+        );
+      }
+      await this.clock.sleep(this.options.sessionPollMs ?? 1000);
+    }
   }
 
   async stopSession(): Promise<void> {
@@ -254,9 +345,10 @@ export class McpUefnAdapter implements UEFNAdapter {
     // answer so one capability dump shows the real toolset and tool names.
     let toolsets: string | undefined;
     if (this.client && this.tools.some((t) => t.name === "list_toolsets")) {
-      const out = await this.client.callTool({ name: "list_toolsets", arguments: {} }).catch(() => undefined);
-      const content = Array.isArray(out?.content) ? out.content : [];
-      toolsets = content.filter((c): c is { type: "text"; text: string } => c?.type === "text").map((c) => c.text).join("\n");
+      const out = await this.client
+        .callTool({ name: "list_toolsets", arguments: {} }, undefined, { timeout: this.options.mcp.timeout_ms })
+        .catch(() => undefined);
+      toolsets = textOf(out?.content);
     }
     return {
       adapter: this.name,
@@ -287,6 +379,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function textOf(content: unknown): string {
+  return (Array.isArray(content) ? content : [])
+    .filter((c): c is { type: "text"; text: string } => c?.type === "text")
+    .map((c) => c.text)
+    .join("\n");
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Tool names in a `describe_toolset` answer: any `name` / `tool_name` / `toolName` string, at any depth. */
+function toolNames(json: unknown, into = new Set<string>()): Set<string> {
+  if (Array.isArray(json)) {
+    for (const item of json) toolNames(item, into);
+  } else if (isRecord(json)) {
+    for (const [key, value] of Object.entries(json)) {
+      if (/^(name|tool_?name)$/i.test(key) && typeof value === "string") into.add(value);
+      else toolNames(value, into);
+    }
+  }
+  return into;
+}
+
 /**
  * A Verse compiler diagnostic. Real UEFN 41.10 lines look like
  * `[...]VerseBuild: Error: C:/.../GameManager.verse(1111,55, 1111,83): Script error 3512: msg`
@@ -305,12 +425,14 @@ export function extractDiagnostics(out: ToolOutput): Diagnostic[] {
   for (const line of out.text.split(/\r?\n/)) {
     const m = DIAGNOSTIC_LINE.exec(line.trim());
     if (!m?.groups) continue;
-    const key = [m.groups["file"], m.groups["line"], m.groups["col"], m.groups["code"], m.groups["sev"]!.toLowerCase()].join("|");
+    const message = m.groups["msg"]!.trim();
+    // Two different errors can share a position and code; only exact repeats are dropped.
+    const key = [m.groups["file"], m.groups["line"], m.groups["col"], m.groups["code"], m.groups["sev"]!.toLowerCase(), message].join("|");
     if (seen.has(key)) continue;
     seen.add(key);
     diagnostics.push({
       severity: m.groups["sev"]!.toLowerCase() === "warning" ? "warning" : "error",
-      message: m.groups["msg"]!.trim(),
+      message,
       file: m.groups["file"]!,
       line: Number(m.groups["line"]),
       ...(m.groups["col"] ? { column: Number(m.groups["col"]) } : {}),
@@ -329,7 +451,7 @@ class McpCommandTransport implements RuntimeTransport {
   readonly name: string;
 
   constructor(
-    private readonly inner: RuntimeTransport,
+    private readonly inner: LogFileTransport,
     private readonly adapter: McpUefnAdapter,
   ) {
     this.name = `${inner.name}+mcp`;
@@ -349,7 +471,12 @@ class McpCommandTransport implements RuntimeTransport {
 
   async command(command: RuntimeCommand): Promise<CommandResult> {
     if ((command.type === "start_game" || command.type === "end_game") && this.adapter.gameCommands().includes(command.type)) {
-      return this.adapter.gameCommand(command.type);
+      const result = await this.adapter.gameCommand(command.type);
+      // UEFN already had the match in the wanted state (it auto-starts one on
+      // launch), so no lifecycle line may follow; emit the event so the
+      // derived phase, and with it the runner's end_game cleanup, see it.
+      if (result.noop) this.inner.assumeGameState(command.type === "start_game");
+      return result;
     }
     return this.inner.command(command);
   }
@@ -360,10 +487,18 @@ class McpCommandTransport implements RuntimeTransport {
 }
 
 /**
+ * The virtual module root UEFN 42.30 prefixes to BuildAll paths
+ * (`/7dd9d4e3-.../DevTools/x.verse`). It stands for the project's Verse
+ * root, so stripping it leaves a path relative to `paths.verse`.
+ */
+const MODULE_ROOT = /^\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\//;
+
+/**
  * Structured diagnostics. Live UEFN 42.30 `VerseToolset.BuildAll` returns
  * `{"returnValue":[{severity:"Error", code:3588, message, filePath,
  * span:{startLine, startCharacter, ...}}]}` with 0-indexed positions; a plain
- * array or a `diagnostics` key is accepted too. Positions become 1-indexed.
+ * array or a `diagnostics` key is accepted too. Positions become 1-indexed,
+ * and module-rooted paths become relative to the Verse root (`paths.verse`).
  */
 function structuredDiagnostics(json: unknown): Diagnostic[] | undefined {
   const list = Array.isArray(json)
@@ -376,7 +511,8 @@ function structuredDiagnostics(json: unknown): Diagnostic[] | undefined {
   if (!list) return undefined;
   return (list as unknown[]).filter(isRecord).map((d) => {
     const sev = String(d["severity"] ?? d["Severity"] ?? "error").toLowerCase();
-    const file = d["filePath"] ?? d["file"] ?? d["FilePath"] ?? d["File"];
+    const raw = d["filePath"] ?? d["file"] ?? d["FilePath"] ?? d["File"];
+    const file = typeof raw === "string" ? raw.replace(MODULE_ROOT, "") : undefined;
     const span = isRecord(d["span"]) ? d["span"] : undefined;
     const line = typeof span?.["startLine"] === "number" ? span["startLine"] + 1 : typeof d["line"] === "number" ? d["line"] : undefined;
     const column = typeof span?.["startCharacter"] === "number" ? span["startCharacter"] + 1 : typeof d["column"] === "number" ? d["column"] : undefined;
@@ -384,7 +520,7 @@ function structuredDiagnostics(json: unknown): Diagnostic[] | undefined {
     return {
       severity: sev === "warning" ? "warning" : sev === "info" || sev === "information" || sev === "hint" ? "info" : "error",
       message: String(d["message"] ?? d["Message"] ?? ""),
-      ...(typeof file === "string" ? { file } : {}),
+      ...(file !== undefined ? { file } : {}),
       ...(line !== undefined ? { line } : {}),
       ...(column !== undefined ? { column } : {}),
       ...(code !== undefined && code !== null ? { code: String(code) } : {}),

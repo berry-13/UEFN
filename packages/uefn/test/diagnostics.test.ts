@@ -34,13 +34,22 @@ const LIVE_BUILD_ALL = {
   ],
 };
 
+test("two errors at one position with one code are both kept", () => {
+  const text = ["a.verse(3,7): error 3512: first problem", "a.verse(3,7): error 3512: second problem", "a.verse(3,7): error 3512: first problem"].join("\n");
+  assert.deepEqual(
+    extractDiagnostics({ text, isError: false }).map((d) => d.message),
+    ["first problem", "second problem"],
+  );
+});
+
 test("parses live BuildAll structured diagnostics with 1-indexed positions", () => {
   const diagnostics = extractDiagnostics({ text: JSON.stringify(LIVE_BUILD_ALL), json: LIVE_BUILD_ALL, isError: false });
   assert.deepEqual(diagnostics, [
     {
       severity: "error",
       message: LIVE_BUILD_ALL.returnValue[0]!.message,
-      file: "/7dd9d4e3-39d1-429a-bcaf-b001382f57f0/DevTools/devtools_poc_device.verse",
+      // The virtual module root is dropped: the path is relative to paths.verse.
+      file: "DevTools/devtools_poc_device.verse",
       line: 9,
       column: 9,
       code: "3588",
