@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, writeFile, mkdir, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -135,4 +136,42 @@ test("loading the same typescript test file twice still returns its tests", asyn
   const later = new Date(Date.now() + 5000);
   await utimes(file, later, later);
   assert.deepEqual(await names(), ["second"]);
+});
+
+test("ids selects tests exactly, not by substring", async () => {
+  const twice = YAML_TEST.replace("name: Capture A", "name: Capture A twice");
+  const dir = await project(CONFIG(), { "a.test.yaml": YAML_TEST, "b.test.yaml": twice });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  try {
+    const exact = await runTests(engine, { ids: ["capture-a"], keepSession: true });
+    assert.equal(exact.status, "passed", JSON.stringify(exact, null, 2));
+    assert.deepEqual(exact.tests.map((t) => t.id), ["capture-a"]);
+    const none = await runTests(engine, { ids: ["capture"], skipBuild: true });
+    assert.equal(none.status, "error");
+    assert.match(none.error ?? "", /no tests match id 'capture'/);
+  } finally {
+    await engine.close();
+  }
+});
+
+test("run history records the git snapshot even when the session fails to start", async () => {
+  const dir = await project(CONFIG(), { "a.test.yaml": YAML_TEST });
+  const gitArgs = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"];
+  execFileSync("git", ["init", "-q", "-b", "trunk"], { cwd: dir });
+  execFileSync("git", [...gitArgs, "add", "-A"], { cwd: dir });
+  execFileSync("git", [...gitArgs, "commit", "-qm", "init"], { cwd: dir });
+  const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  engine.adapter.startSession = async () => {
+    throw new Error("no editor");
+  };
+  try {
+    const summary = await runTests(engine, { skipBuild: true });
+    assert.equal(summary.failedStage, "STARTING_SESSION");
+    const row = engine.db?.listRuns().find((r) => r.runId === summary.runId);
+    assert.equal(row?.gitCommit, commit);
+    assert.equal(row?.gitBranch, "trunk");
+  } finally {
+    await engine.close();
+  }
 });

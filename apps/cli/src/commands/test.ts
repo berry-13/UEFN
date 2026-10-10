@@ -10,6 +10,7 @@ export const test: Command = {
   usage: "test [filter]",
   summary: "Compile, start/reuse a session, run tests, assert",
   options: {
+    id: { type: "string", multiple: true },
     repeat: { type: "string" },
     seed: { type: "string" },
     retries: { type: "string" },
@@ -23,6 +24,7 @@ export const test: Command = {
     debug: { type: "boolean" },
   },
   optionHelp: [
+    "--id <id>              Run exactly this test id (repeatable; no substring match)",
     "--repeat <n>           Run each test n times and report reliability",
     "--seed <n>             Base seed (iteration i uses seed+i)",
     "--retries <n>          Retries per failing test (ignored with --repeat)",
@@ -47,8 +49,10 @@ export const test: Command = {
       const retries = int(str(values, "retries"), "retries");
       const reporters = list(values, "reporter");
       const output = str(values, "output");
+      const ids = list(values, "id");
       const summary = await runTests(engine, {
         ...(positionals[0] ? { filter: positionals[0] } : {}),
+        ...(ids?.length ? { ids } : {}),
         ...(repeat !== undefined ? { repeat } : {}),
         ...(seed !== undefined ? { seed } : {}),
         ...(retries !== undefined ? { retries } : {}),
