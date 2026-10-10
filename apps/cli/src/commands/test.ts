@@ -47,6 +47,17 @@ export const test: Command = {
       const retries = int(str(values, "retries"), "retries");
       const reporters = list(values, "reporter");
       const output = str(values, "output");
+      const reporter =
+        values.json && !reporters?.length
+          ? undefined
+          : createReporters({
+              ...(reporters ? { reporters } : {}),
+              ...(output ? { output } : {}),
+              root: engine.root,
+              verbose: values.verbose === true,
+              ...(values.json ? { stdoutJson: true } : {}),
+              ...interactive.reporter,
+            });
       const summary = await runTests(engine, {
         ...(positionals[0] ? { filter: positionals[0] } : {}),
         ...(repeat !== undefined ? { repeat } : {}),
@@ -54,22 +65,12 @@ export const test: Command = {
         ...(retries !== undefined ? { retries } : {}),
         skipBuild: values["no-compile"] === true,
         ...(values["update-snapshots"] ? { updateSnapshots: true } : {}),
-        ...(values.json && !reporters?.length
-          ? {}
-          : {
-              onEvent: createReporters({
-                ...(reporters ? { reporters } : {}),
-                ...(output ? { output } : {}),
-                root: engine.root,
-                verbose: values.verbose === true,
-                ...(values.json ? { stdoutJson: true } : {}),
-                ...interactive.reporter,
-              }),
-            }),
+        ...(reporter ? { onEvent: reporter } : {}),
         ...interactive.runOptions,
       });
       if (values.json) process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
-      return summary.status === "passed" ? 0 : summary.status === "failed" ? 1 : 2;
+      const code = summary.status === "passed" ? 0 : summary.status === "failed" ? 1 : 2;
+      return code === 0 && reporter?.failures.length ? 2 : code;
     } finally {
       interactive.stop();
       await engine.close();

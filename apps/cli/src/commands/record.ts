@@ -31,10 +31,16 @@ async function refuseOverwrite(engine: DevToolsEngine, target: string, force: bo
   }
 }
 
-async function writeTest(recording: Recording, target: string, name: string): Promise<void> {
-  const { yaml } = generateYamlTest(recording, { name });
+const NO_ASSERTIONS =
+  "the recording has no device, team or outcome state to assert, so no test was written (a test without assertions fails in the runner); record a session where something happens";
+
+/** Writes the generated test; returns false (writing nothing) when it would have no assertions. */
+async function writeTest(recording: Recording, target: string, name: string): Promise<boolean> {
+  const { test, yaml } = generateYamlTest(recording, { name });
+  if (test.assert.length === 0) return false;
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, yaml);
+  return true;
 }
 
 /** `uefn record`: observe a session (or a scripted run) and turn it into a test. */
@@ -50,7 +56,10 @@ export async function cmdRecord(engine: DevToolsEngine, options: RecordOptions):
     const name = options.name ?? recording.name;
     const target = testPath(slugify(name));
     await refuseOverwrite(engine, target, options.force);
-    await writeTest(recording, target, name);
+    if (!(await writeTest(recording, target, name))) {
+      console.error(`error: ${NO_ASSERTIONS}`);
+      return 1;
+    }
     log(`Generated ${rel(target)} from ${options.from}`);
     if (options.json) process.stdout.write(JSON.stringify({ test: rel(target), events: recording.events.length }, null, 2) + "\n");
     return 0;
@@ -70,8 +79,14 @@ export async function cmdRecord(engine: DevToolsEngine, options: RecordOptions):
     if (engine.supportsCommand("reset")) await engine.command({ type: "reset" });
     if (engine.supportsCommand("seed")) await engine.command({ type: "seed", seed: 1 });
   }
-  engine.resetObservedState();
-  const recorder = new Recorder(engine, { name: slug });
+  if (script) {
+    engine.resetObservedState();
+  } else if (engine.state.phase === "playing") {
+    console.error(
+      "warning: the game is already running, so start_game and the spawns that happened before now are not captured; the generated test may need them added by hand.",
+    );
+  }
+  const recorder = new Recorder(engine, { name });
   recorder.start();
 
   if (script) {
@@ -105,7 +120,10 @@ export async function cmdRecord(engine: DevToolsEngine, options: RecordOptions):
     log("Nothing was observed; skipping test generation.");
     return 1;
   }
-  await writeTest(recording, target, name);
+  if (!(await writeTest(recording, target, name))) {
+    console.error(`error: ${NO_ASSERTIONS}`);
+    return 1;
+  }
   log(`Generated ${rel(target)}`);
   log(`Run it with: uefn test ${slug}`);
   if (options.json) {

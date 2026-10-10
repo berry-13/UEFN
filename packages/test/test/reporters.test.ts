@@ -243,6 +243,7 @@ test("one failing reporter does not stop the others", async () => {
   await writeFile(join(root, "file"), "x");
   const out: string[] = [];
   const err: string[] = [];
+  let handler: ReturnType<typeof createReporters> | undefined;
   const realErr = process.stderr.write;
   process.stderr.write = ((t: string) => (err.push(String(t)), true)) as typeof process.stderr.write;
   try {
@@ -254,9 +255,11 @@ test("one failing reporter does not stop the others", async () => {
       root,
     });
     assert.doesNotThrow(() => onEvent({ kind: "done", summary: SUMMARY }));
+    handler = onEvent;
   } finally {
     process.stderr.write = realErr;
   }
-  assert.ok(err.join("").includes("warning: reporter failed"));
+  assert.ok(err.join("").includes("reporter failed"));
   assert.ok(out.some((l) => l.startsWith("::error ")), "github reporter still ran");
+  assert.equal(handler?.failures.length, 1);
 });
