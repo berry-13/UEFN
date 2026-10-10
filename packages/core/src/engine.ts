@@ -69,6 +69,9 @@ export class DevToolsEngine {
   private pump?: Promise<void>;
   private ready = false;
   private connected = false;
+  private connecting?: Promise<void>;
+  /** Event log index where the current session's transport started; waitForRuntime looks from here. */
+  private sessionStartIndex = 0;
   private warnedPersistence = false;
   lastCompile?: CompileResult;
   /** SQLite sink and query layer; undefined when `persistence.enabled` is false. */
@@ -86,7 +89,14 @@ export class DevToolsEngine {
     });
     // persistence: begin
     if (loaded.config.persistence.enabled) {
-      this.db = new DevToolsDatabase(resolve(loaded.root, loaded.config.persistence.path));
+      try {
+        this.db = new DevToolsDatabase(resolve(loaded.root, loaded.config.persistence.path));
+      } catch (error) {
+        // A read-only project (or an unusable path) must not stop the engine; run without history.
+        this.persistenceError(error);
+      }
+    }
+    if (this.db) {
       this.events.subscribe((event) => {
         const session = this.currentSession;
         if (!session) return;
@@ -95,14 +105,18 @@ export class DevToolsEngine {
           if (event.type === EventTypes.GameStarted || event.type === EventTypes.GameEnded) this.db?.upsertSession(session);
         } catch (error) {
           // Persistence must never break event delivery to later subscribers.
-          if (!this.warnedPersistence) {
-            this.warnedPersistence = true;
-            process.stderr.write(`uefn-devtools: persistence error: ${error instanceof Error ? error.message : String(error)}\n`);
-          }
+          this.persistenceError(error);
         }
       });
     }
     // persistence: end
+  }
+
+  /** Reports the first persistence failure on stderr; later ones are dropped. */
+  private persistenceError(error: unknown): void {
+    if (this.warnedPersistence) return;
+    this.warnedPersistence = true;
+    process.stderr.write(`uefn-devtools: persistence error: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 
   static async open(options: EngineOptions = {}): Promise<DevToolsEngine> {
@@ -149,10 +163,18 @@ export class DevToolsEngine {
     return discoverProject(this.loaded);
   }
 
+  /** Connects the adapter once; concurrent callers share the same attempt. */
   async connect(): Promise<void> {
     if (this.connected) return;
-    await this.adapter.connect();
-    this.connected = true;
+    this.connecting ??= this.adapter
+      .connect()
+      .then(() => {
+        this.connected = true;
+      })
+      .finally(() => {
+        this.connecting = undefined;
+      });
+    return this.connecting;
   }
 
   async capabilities(): Promise<CapabilityReport> {
@@ -190,19 +212,28 @@ export class DevToolsEngine {
       this.db.upsertSession(this.currentSession);
     }
     // persistence: end
+    // Only events from this session's transport count as its runtime announcing itself.
+    this.sessionStartIndex = this.events.mark();
     const transport = this.adapter.transport();
     await transport.start();
     this.pump = (async () => {
       for await (const event of transport.receive()) this.events.append(event);
     })();
     this.currentSession.status = "connected";
+    // persistence: begin
+    try {
+      this.db?.upsertSession(this.currentSession);
+    } catch (error) {
+      this.persistenceError(error);
+    }
+    // persistence: end
     return this.currentSession;
   }
 
   /** Blocks until the in-game runtime announces itself (`session.ready`). */
   async waitForRuntime(timeoutMs = parseDuration(this.config.runtime.ready_timeout)): Promise<void> {
     if (this.ready) return;
-    await this.waitForEvent({ type: EventTypes.SessionReady }, { timeoutMs, fromIndex: 0 });
+    await this.waitForEvent({ type: EventTypes.SessionReady }, { timeoutMs, fromIndex: this.sessionStartIndex });
   }
 
   async stopSession(): Promise<void> {
@@ -227,6 +258,7 @@ export class DevToolsEngine {
   }
 
   async close(): Promise<void> {
+    await this.connecting?.catch(() => {});
     try {
       await this.stopSession();
     } finally {

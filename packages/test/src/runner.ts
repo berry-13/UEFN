@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import type { DevToolsEngine } from "@uefn-devtools/core";
+import { captureGitInfo, type DevToolsEngine } from "@uefn-devtools/core";
 import type { RunStage, RunSummary, TestAttempt, TestResult } from "@uefn-devtools/protocol";
 import { parseDuration } from "@uefn-devtools/protocol";
 import { TestAbortedError, TestContext, globalState, type TestDefinition } from "./context.ts";
@@ -21,6 +21,8 @@ export type RunnerEvent =
 
 export interface RunOptions {
   filter?: string;
+  /** Run exactly these test ids (applied after `filter`); unlike `filter`, no substring matching. */
+  ids?: string[];
   /** Run each test N times (flaky detection, spec §25). */
   repeat?: number;
   retries?: number;
@@ -67,13 +69,19 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     emit({ kind: "stage", stage: s, at: Date.now(), ...(test ? { test } : {}), ...(iteration !== undefined ? { iteration } : {}) });
 
   const summary: RunSummary = { runId, status: "passed", startedAt: started, durationMs: 0, tests: [] };
+  // The run's own git snapshot: a reused session's is stale, and a session that failed to start has none.
+  const git = captureGitInfo(engine.root).catch(() => undefined);
   try {
     stage("DISCOVERING");
     const files = options.files
       ? options.files.map((f) => resolve(engine.root, f))
       : await findTestFiles(resolve(engine.root, engine.config.paths.tests));
     const { tests, errors } = await loadTests(files);
-    const selected = filterTests(tests, options.filter);
+    let selected = filterTests(tests, options.filter);
+    if (options.ids) {
+      const wanted = new Set(options.ids);
+      selected = selected.filter((t) => wanted.has(t.id));
+    }
     emit({
       kind: "discovered",
       tests: selected.map((t) => ({ id: t.id, name: t.name, file: relative(engine.root, t.file) })),
@@ -91,7 +99,11 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       seen.set(t.id, t.file);
     }
     if (selected.length === 0) {
-      throw new StageError("VALIDATING", options.filter ? `no tests match '${options.filter}'` : "no tests found");
+      const criteria = [
+        ...(options.filter ? [`'${options.filter}'`] : []),
+        ...(options.ids ? [`id ${options.ids.map((id) => `'${id}'`).join(", ")}`] : []),
+      ];
+      throw new StageError("VALIDATING", criteria.length ? `no tests match ${criteria.join(" and ")}` : "no tests found");
     }
 
     if (!options.skipBuild) {
@@ -177,9 +189,10 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     await writeArtifact(artifactRoot, "summary.json", summary).catch(() => {});
     // History must never fail a run.
     try {
+      const info = await git;
       engine.db?.recordRun(summary, {
-        ...(engine.session?.gitCommit ? { gitCommit: engine.session.gitCommit } : {}),
-        ...(engine.session?.git?.branch ? { gitBranch: engine.session.git.branch } : {}),
+        ...(info?.commit ? { gitCommit: info.commit } : {}),
+        ...(info?.branch ? { gitBranch: info.branch } : {}),
       });
     } catch {
       // ignored
