@@ -179,3 +179,16 @@ test("a throwing test loader becomes a failed check instead of losing the report
   assert.ok(status(report, "verse.runtime"));
   assert.equal(report.ok, false);
 });
+
+test("results path that is a file, and a log path that is a directory, fail", async () => {
+  const dir = await project({
+    "uefn-devtools.config.yaml": `${CONFIG}paths:\n  results: out.txt\nruntime:\n  log_path: logs\n`,
+    "Verse/a.verse": "a := class(creative_device){}\n",
+    "out.txt": "x",
+    "logs/keep": "",
+  });
+  const report = await runDoctor(undefined, { cwd: dir, adapter: "mcp" });
+  assert.equal(status(report, "results.writable")?.status, "fail");
+  assert.equal(status(report, "runtime.log")?.status, "fail");
+  assert.match(status(report, "runtime.log")!.detail, /must be a file/);
+});

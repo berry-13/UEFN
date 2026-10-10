@@ -58,7 +58,18 @@ export const deps: Command = {
     }
 
     const targets = impact !== undefined ? [impact] : await changedFiles(loaded.root);
-    const result = impactOfAll(graph, targets);
+    let result = impactOfAll(graph, targets);
+    if (impact === undefined) {
+      const unmatched = targets.filter((t) => t.endsWith(".verse") && impactOfAll(graph, [t]).seeds.length === 0);
+      if (unmatched.length > 0) {
+        console.error(
+          `warning: changed Verse file(s) not in the dependency graph (${unmatched.join(", ")}); selecting all tests`,
+        );
+        const all = graph.nodes.filter((n) => n.kind === "test");
+        const seen = new Set(result.tests.map((n) => n.id));
+        result = { ...result, tests: [...result.tests, ...all.filter((n) => !seen.has(n.id))] };
+      }
+    }
     if (impact !== undefined && result.seeds.length === 0) {
       console.error(`no Verse file or symbol matches '${impact}'`);
       return 2;

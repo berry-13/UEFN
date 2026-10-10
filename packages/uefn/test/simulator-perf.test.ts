@@ -71,3 +71,17 @@ test("a very fast simulated clock does not starve the event loop", async () => {
   assert.ok(performance.now() - stopping < 1000, "session stops promptly");
   assert.ok(stopping - started < 3000);
 });
+
+test("no perf.sample is emitted while no match is playing", () => {
+  const config = SimulatedConfig.parse({ seed: 1, tick_ms: 100, devices: [{ id: "A" }], profiling: { enabled: true, sample_every_ticks: 1 } });
+  const events: RuntimeEvent[] = [];
+  const world = new SimulatedWorld(config, (e) => {
+    events.push({ ...e, id: `e${events.length}`, timestamp: events.length });
+    return `e${events.length}`;
+  });
+  for (let i = 0; i < 10; i++) world.tick(100);
+  assert.equal(events.filter((e) => e.type === "perf.sample").length, 0);
+  world.handle({ type: "start_game" });
+  world.tick(100);
+  assert.ok(events.some((e) => e.type === "perf.sample"));
+});

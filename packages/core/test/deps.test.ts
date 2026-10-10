@@ -161,3 +161,14 @@ test("exporters produce DOT and Mermaid", async () => {
   assert.match(mermaid, /-->\|emits\|/);
   assert.ok(!mermaid.includes('""'));
 });
+
+test("emitted PascalCase events normalize to the id tests use", async () => {
+  const dir = await project({
+    "uefn-devtools.config.yaml": "",
+    "Verse/a.verse": 'a := class(creative_device):\n    Run():void =\n        DevTools.Emit("CaptureCompleted", array{})\n',
+    "Tests/a.test.yaml": "name: Cap\nsteps:\n  - wait_for: { event: capture.completed }\n",
+  });
+  const graph = await buildDepsGraph(await loadConfig(dir));
+  assert.ok(graph.nodes.some((n) => n.id === "event:capture.completed"));
+  assert.deepEqual(impactOf(graph, "Verse/a.verse").tests.map((t) => t.label), ["cap"]);
+});
