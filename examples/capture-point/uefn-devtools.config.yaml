@@ -26,8 +26,8 @@ mcp:
   # UEFN 42.30+: enable Project > Project Settings > Experimental >
   # "UEFN MCP Toolsets" (docs/evidence/uefn-42.30-live.md).
   # url: http://localhost:8000/mcp
-  tools: {}
-  # Live 42.30 tool names, reached through call_tool:
+  timeout_ms: 120000
+  # Live 42.30 tool names, reached through call_tool (uncomment to map them):
   # tools:
   #   compile: ValkyrieToolset.VerseToolset/BuildAll
   #   start_session: ValkyrieToolset.SessionToolset/StartSession
