@@ -94,7 +94,7 @@ from a terminal connects or disconnects the views without polling.
 ### Status bar
 
 Shows "UEFN: no daemon" or "UEFN: session connected" (or the current session
-status). With no daemon, activating it runs `uefn daemon start --detach`;
+status). With no daemon, activating it runs `uefn daemon start --detach --ui`, retrying without `--ui` (and warning that the dashboard is unavailable) if that fails;
 with one, it runs `uefn ui` to open the dashboard. If the CLI has no `ui`
 command (or it fails early), a warning explains why instead of failing
 silently. The item has an accessible label describing the state and the
