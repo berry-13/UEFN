@@ -56,12 +56,12 @@ export class VerseCompiler implements vscode.Disposable {
       ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "UEFN: Compiling Verse" }, task)
       : await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "Compiling Verse" }, task);
     if (!result) return undefined;
-    this.apply(result);
+    this.apply(result, await this.project.verseDir());
     return result;
   }
 
-  private apply(result: CompileResult): void {
-    const { byFile, general } = mapDiagnostics(result, this.project.root);
+  private apply(result: CompileResult, verseDir: string | undefined): void {
+    const { byFile, general } = mapDiagnostics(result, this.project.root, verseDir);
     this.diagnostics.clear();
     for (const [file, list] of byFile) {
       this.diagnostics.set(

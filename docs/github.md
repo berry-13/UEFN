@@ -33,8 +33,10 @@ is added automatically. `--json` keeps working as before.
   directories) appended to the job summary.
 
 Artifact directories are paths on the runner. They are reachable from the run
-page only if the workflow uploads `.devtools/results` (the generated workflow does
-this on failure).
+page only if the workflow uploads the results directory (the generated workflow
+does this on failure). `actions/upload-artifact@v4` skips hidden directories by
+default, so the upload step sets `include-hidden-files: true`; keep it if you
+edit the step.
 
 ### junit
 
@@ -52,12 +54,20 @@ uefn init --github
 ```
 
 Writes `.github/workflows/uefn-devtools.yml` (refuses to overwrite). It checks
-out, sets up Node 22, installs the CLI, runs `uefn test --reporter github,junit`
-and uploads `.devtools/results` on failure. Only official `actions/*` actions are
-used. It uses whatever adapter your config selects (`simulated` by default).
+out, sets up Node 22, installs the project's dependencies (`npm ci` when a
+`package-lock.json` exists, otherwise `npm install`), runs
+`npx uefn test --reporter github,junit` and uploads the results directory
+(`paths.results` from your config, `.devtools/results` by default) on failure.
+Only official `actions/*` actions are used. It uses whatever adapter your config
+selects (`simulated` by default).
 
-Assumptions to check: the template installs `@uefn-devtools/cli` from npm, which
-is not published yet. Replace that step for now. The self-hosted Windows job for
+The CLI must be a devDependency of the project (`npm install --save-dev
+@uefn-devtools/cli`), because TypeScript tests import `@uefn-devtools/test` and
+that has to resolve on a fresh runner; a global install is not enough. With pnpm
+or yarn, replace the install step.
+
+Assumptions to check: the template expects `@uefn-devtools/cli` on npm, which
+is not published yet. Until it is, install it from a tarball or git checkout. The self-hosted Windows job for
 the `mcp` adapter is commented out and unverified: it needs UEFN and Fortnite on
 the runner, and headless operation is not established (see `capabilities.md`).
 

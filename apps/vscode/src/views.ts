@@ -266,6 +266,7 @@ export class LiveConnection implements vscode.Disposable {
   sync(): void {
     this.stop();
     if (!this.project.daemon) {
+      this.events.clear();
       this.events.setConnected(false);
       this.sessionEmitter.fire(undefined);
       void this.state.refresh();
@@ -303,7 +304,7 @@ export class LiveConnection implements vscode.Disposable {
             this.state.scheduleRefresh();
           }
         },
-        { signal: abort.signal, ...(this.lastIndex >= 0 ? { fromIndex: this.lastIndex + 1 } : {}) },
+        { signal: abort.signal, fromIndex: this.lastIndex + 1 },
       );
     } catch (error) {
       if (abort.signal.aborted) return;
@@ -315,6 +316,7 @@ export class LiveConnection implements vscode.Disposable {
     if (info && this.abort === abort) {
       this.retry = setTimeout(() => void this.connect(), 2000);
     } else if (!info) {
+      this.events.clear();
       this.events.setConnected(false);
       this.sessionEmitter.fire(undefined);
     }

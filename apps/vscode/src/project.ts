@@ -1,6 +1,8 @@
+import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { describeFailure, resolveCli, runCli, type CliCommand, type CliRunOptions, type CliRunResult } from "./cli.ts";
+import { resolveVerseDir } from "./mapping.ts";
 import { DaemonHttp, readLiveDaemon } from "./daemon.ts";
 import type { DaemonInfo } from "./types.ts";
 
@@ -8,6 +10,12 @@ export const CONFIG_FILE = "uefn-devtools.config.yaml";
 
 function settings(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration("uefnDevtools");
+}
+
+/** Number of path segments between `base` and `dir` (0 for `base` itself). */
+function depthFrom(base: string, dir: string): number {
+  const relative = path.relative(base, dir);
+  return relative === "" ? 0 : relative.split(/[\\/]/).length;
 }
 
 /**
@@ -43,7 +51,7 @@ export class Project implements vscode.Disposable {
     const configured = settings().get<string>("projectRoot", "").trim();
     if (configured) return new Project(path.resolve(base, configured), output);
     const found = await vscode.workspace.findFiles(`**/${CONFIG_FILE}`, "**/node_modules/**", 20);
-    const dirs = found.map((u) => path.dirname(u.fsPath)).sort((a, b) => a.length - b.length || a.localeCompare(b));
+    const dirs = found.map((u) => path.dirname(u.fsPath)).sort((a, b) => depthFrom(base, a) - depthFrom(base, b) || a.localeCompare(b));
     return new Project(dirs[0] ?? base, output);
   }
 
@@ -63,6 +71,16 @@ export class Project implements vscode.Disposable {
     this.daemonInfo = next;
     if (changed) this.daemonEmitter.fire(next);
     return next;
+  }
+
+  /** The Verse source directory from `paths.verse` in the project config, or undefined when unreadable. */
+  async verseDir(): Promise<string | undefined> {
+    try {
+      const text = await readFile(path.join(this.root, CONFIG_FILE), "utf8");
+      return resolveVerseDir(text, this.root);
+    } catch {
+      return undefined;
+    }
   }
 
   cli(): CliCommand {
