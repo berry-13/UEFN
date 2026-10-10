@@ -211,3 +211,88 @@ test("a throwing adapter.stopSession still finalises the session and closes the 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("two writers sharing a session id never overwrite each other's events", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-db-multi-"));
+  const path = join(dir, "devtools.db");
+  const a = new DevToolsDatabase(path);
+  const b = new DevToolsDatabase(path);
+  try {
+    a.upsertSession(session);
+    b.upsertSession(session);
+    a.queueEvent(session.id, events[0]!);
+    b.queueEvent(session.id, events[1]!);
+    a.flush();
+    b.flush();
+    a.queueEvent(session.id, events[2]!);
+    a.flush();
+    assert.deepEqual(a.eventsForSession(session.id).map((e) => e.id), ["e1", "e2", "e3"]);
+  } finally {
+    a.close();
+    b.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("uniqueSessionId reserves the id so a second claimant gets a suffix", () => {
+  const db = new DevToolsDatabase(":memory:");
+  try {
+    assert.equal(db.uniqueSessionId("sim", 1000), "sim");
+    assert.equal(db.uniqueSessionId("sim", 2000), `sim-${(2000).toString(36)}`);
+    assert.equal(db.uniqueSessionId("sim", 1000), "sim");
+  } finally {
+    db.close();
+  }
+});
+
+test("a reused id after prune restarts event indexes at zero", () => {
+  const db = new DevToolsDatabase(":memory:");
+  try {
+    db.upsertSession(session);
+    db.queueEvent(session.id, events[0]!);
+    db.queueEvent(session.id, events[1]!);
+    db.prune(5000);
+    db.upsertSession(session);
+    db.queueEvent(session.id, events[2]!);
+    assert.equal(db.eventsForSession(session.id, { fromIndex: 0 }).length, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("close retries a locked flush and reports lost events on stderr", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-db-close-"));
+  const path = join(dir, "devtools.db");
+  const db = new DevToolsDatabase(path, { busyTimeoutMs: 1 });
+  const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
+  const locker = new DatabaseSync(path);
+  const writes: string[] = [];
+  const realWrite = process.stderr.write;
+  try {
+    db.upsertSession(session);
+    locker.exec("BEGIN IMMEDIATE");
+    db.queueEvent(session.id, events[0]!);
+    process.stderr.write = ((chunk: string) => (writes.push(String(chunk)), true)) as typeof process.stderr.write;
+    db.close();
+    process.stderr.write = realWrite;
+    assert.ok(writes.some((w) => /lost 1 buffered event/.test(w)), writes.join(""));
+  } finally {
+    process.stderr.write = realWrite;
+    locker.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("testHistory ignores skipped runs when counting flips", () => {
+  const db = new DevToolsDatabase(":memory:");
+  const run = (id: string, at: number, status: TestResult["status"]): RunSummary =>
+    ({ runId: id, status: "passed", startedAt: at, durationMs: 1, tests: [testResult("t", status, status === "passed" ? 1 : 0, status === "failed" ? 1 : 0)] }) as unknown as RunSummary;
+  try {
+    db.recordRun(run("r1", 1, "passed"));
+    db.recordRun(run("r2", 2, "skipped"));
+    db.recordRun(run("r3", 3, "passed"));
+    assert.equal(db.testHistory("t").flips, 0);
+  } finally {
+    db.close();
+  }
+});
