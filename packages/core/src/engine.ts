@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import type {
   CommandResult,
   CompileResult,
@@ -184,7 +184,14 @@ export class DevToolsEngine {
 
   async compile(): Promise<CompileResult> {
     await this.connect();
-    this.lastCompile = await this.adapter.compile();
+    const result = await this.adapter.compile();
+    // Adapters may report files relative to the Verse root (UEFN does); clients
+    // get absolute paths so they never have to read paths.verse themselves.
+    const verseDir = resolve(this.root, this.config.paths.verse);
+    this.lastCompile = {
+      ...result,
+      diagnostics: result.diagnostics.map((d) => (d.file && !isAbsolute(d.file) ? { ...d, file: resolve(verseDir, d.file) } : d)),
+    };
     return this.lastCompile;
   }
 

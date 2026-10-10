@@ -432,3 +432,32 @@ test("aborting a client stream before its headers arrive resolves quietly", asyn
     await close();
   }
 });
+
+test("an unrelated HTTP service answering 2xx is not taken for the daemon", async () => {
+  const { createServer } = await import("node:http");
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"ok":true}');
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as { port: number }).port;
+  try {
+    assert.equal(await probeDaemon({ port, token: "x", pid: process.pid }), false);
+  } finally {
+    server.close();
+  }
+});
+
+test("concurrent recovery of one stale lock lets exactly one process win", async () => {
+  const { acquireDaemonLock } = await import("@uefn-devtools/daemon");
+  const dir = await mkdtemp(join(tmpdir(), "uefn-devtools-lock-"));
+  await mkdir(join(dir, ".devtools"), { recursive: true });
+  // A lock left by a process that no longer exists.
+  await writeFile(daemonLockPath(dir), JSON.stringify({ pid: 2 ** 22 + 12345, nonce: "dead" }) + "\n");
+  const results = await Promise.allSettled([acquireDaemonLock(dir), acquireDaemonLock(dir), acquireDaemonLock(dir)]);
+  const won = results.filter((r) => r.status === "fulfilled");
+  assert.equal(won.length, 1, results.map((r) => (r.status === "rejected" ? String(r.reason) : "ok")).join(" | "));
+  const held = JSON.parse(await readFile(daemonLockPath(dir), "utf8"));
+  assert.equal(held.pid, process.pid);
+  await (won[0] as PromiseFulfilledResult<{ release: () => Promise<void> }>).value.release();
+});

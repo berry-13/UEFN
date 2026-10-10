@@ -78,9 +78,12 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       : await findTestFiles(resolve(engine.root, engine.config.paths.tests));
     const { tests, errors } = await loadTests(files);
     let selected = filterTests(tests, options.filter);
+    let missingIds: string[] = [];
     if (options.ids) {
       const wanted = new Set(options.ids);
       selected = selected.filter((t) => wanted.has(t.id));
+      const found = new Set(selected.map((t) => t.id));
+      missingIds = [...wanted].filter((id) => !found.has(id));
     }
     emit({
       kind: "discovered",
@@ -89,6 +92,10 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     });
 
     stage("VALIDATING");
+    if (missingIds.length > 0) {
+      // Every explicitly requested test must run; a typo must not pass silently.
+      throw new StageError("VALIDATING", `no test with id ${missingIds.map((id) => `'${id}'`).join(", ")}`);
+    }
     if (errors.length > 0) {
       throw new StageError("VALIDATING", errors.map((e) => `${relative(engine.root, e.file)}: ${e.message}`).join("\n"));
     }

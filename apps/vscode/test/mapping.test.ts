@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { groupByFile, mapDiagnostics, mapRunSummary, mapTestResult, planRuns, resolveVerseDir } from "../dist/mapping.js";
+import { groupByFile, mapDiagnostics, mapRunSummary, mapTestResult, planRuns } from "../dist/mapping.js";
 import type { ListedTest, RunSummary, TestAttempt, TestResult } from "../src/types.ts";
 
 function attempt(over: Partial<TestAttempt> = {}): TestAttempt {
@@ -147,7 +147,7 @@ test("mapDiagnostics resolves files, converts to 0-based positions and keeps fil
   assert.deepEqual(mapped.general.map((d) => d.message), ["simulated compile"]);
 });
 
-test("mapDiagnostics resolves module-relative paths against the Verse dir and keeps absolute ones", () => {
+test("mapDiagnostics keeps absolute paths and resolves an older CLI's relative paths against the root", () => {
   const mapped = mapDiagnostics(
     {
       success: false,
@@ -158,15 +158,8 @@ test("mapDiagnostics resolves module-relative paths against the Verse dir and ke
       ],
     },
     "/proj",
-    "/proj/Verse",
   );
-  assert.ok(mapped.byFile.has("/proj/Verse/Sub/game.verse"));
+  assert.ok(mapped.byFile.has("/proj/Sub/game.verse"));
   assert.ok(mapped.byFile.has("/abs/x.verse"));
 });
 
-test("resolveVerseDir reads paths.verse with quotes and comments, defaulting to ./Verse", () => {
-  assert.equal(resolveVerseDir("adapter: simulated\n", "/p"), "/p/Verse");
-  assert.equal(resolveVerseDir("paths:\n  verse: ./Content/Verse # src\n  tests: ./T\n", "/p"), "/p/Content/Verse");
-  assert.equal(resolveVerseDir('paths:\n  verse: "Src"\n', "/p"), "/p/Src");
-  assert.equal(resolveVerseDir("other:\n  verse: nope\npaths:\n  tests: ./T\n", "/p"), "/p/Verse");
-});

@@ -24,6 +24,6 @@ test("initGithubWorkflow uploads the configured paths.results", async () => {
     console.log = log;
   }
   const text = await readFile(join(root, WORKFLOW_PATH), "utf8");
-  assert.match(text, /path: out\/results/);
+  assert.match(text, /path: "out\/results"/);
   assert.doesNotMatch(text, /\.devtools\/results/);
 });

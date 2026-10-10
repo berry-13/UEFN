@@ -169,32 +169,11 @@ export interface MappedDiagnostics {
 }
 
 /**
- * Reads `paths.verse` from the text of uefn-devtools.config.yaml and resolves it
- * against `root`. Defaults to `./Verse`. A line scan is enough for this one
- * scalar and keeps the extension free of a YAML dependency.
+ * Groups compile diagnostics by absolute file path. The CLI already returns
+ * absolute paths (the engine resolves adapter paths against paths.verse);
+ * a relative path from an older CLI resolves against `root`.
  */
-export function resolveVerseDir(configText: string, root: string): string {
-  let value = "./Verse";
-  let inPaths = false;
-  for (const raw of configText.split(/\r?\n/)) {
-    if (/^\s*(#.*)?$/.test(raw)) continue;
-    if (/^\S/.test(raw)) {
-      inPaths = /^paths\s*:\s*(#.*)?$/.test(raw);
-      continue;
-    }
-    if (!inPaths) continue;
-    const match = /^\s+verse\s*:\s*(?:"([^"]*)"|'([^']*)'|([^#\s][^#]*?))\s*(?:#.*)?$/.exec(raw);
-    if (match) value = (match[1] ?? match[2] ?? match[3] ?? value).trim() || value;
-  }
-  return path.resolve(root, value);
-}
-
-/**
- * Groups compile diagnostics by absolute file path. Relative paths resolve
- * against `verseDir` (UEFN reports paths relative to the Verse module root),
- * which defaults to `root`; absolute paths are kept.
- */
-export function mapDiagnostics(result: CompileResult, root: string, verseDir: string = root): MappedDiagnostics {
+export function mapDiagnostics(result: CompileResult, root: string): MappedDiagnostics {
   const byFile = new Map<string, MappedDiagnostic[]>();
   const general: Diagnostic[] = [];
   for (const d of result.diagnostics) {
@@ -202,7 +181,7 @@ export function mapDiagnostics(result: CompileResult, root: string, verseDir: st
       general.push(d);
       continue;
     }
-    const file = path.resolve(verseDir, d.file);
+    const file = path.resolve(root, d.file);
     const list = byFile.get(file) ?? [];
     list.push({
       line: Math.max(0, (d.line ?? 1) - 1),

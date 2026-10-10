@@ -42,7 +42,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: uefn-devtools-results
-          path: ${resultsDir}
+          path: ${JSON.stringify(resultsDir)}
           include-hidden-files: true
           if-no-files-found: ignore
 
@@ -65,7 +65,7 @@ jobs:
   #       uses: actions/upload-artifact@v4
   #       with:
   #         name: uefn-devtools-results-uefn
-  #         path: ${resultsDir}
+  #         path: ${JSON.stringify(resultsDir)}
   #         include-hidden-files: true
   #         if-no-files-found: ignore
 `;

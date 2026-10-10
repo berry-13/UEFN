@@ -148,7 +148,7 @@ test("ids selects tests exactly, not by substring", async () => {
     assert.deepEqual(exact.tests.map((t) => t.id), ["capture-a"]);
     const none = await runTests(engine, { ids: ["capture"], skipBuild: true });
     assert.equal(none.status, "error");
-    assert.match(none.error ?? "", /no tests match id 'capture'/);
+    assert.match(none.error ?? "", /no test with id 'capture'/);
   } finally {
     await engine.close();
   }
@@ -174,4 +174,14 @@ test("run history records the git snapshot even when the session fails to start"
   } finally {
     await engine.close();
   }
+});
+
+test("an unknown id among several requested ids fails validation instead of passing", async () => {
+  const dir = await project(CONFIG(), { "a.test.yaml": YAML_TEST });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const summary = await runTests(engine, { ids: ["capture-a", "capture-b-typo"] });
+  await engine.close();
+  assert.equal(summary.status, "error");
+  assert.equal(summary.failedStage, "VALIDATING");
+  assert.match(summary.error ?? "", /no test with id 'capture-b-typo'/);
 });

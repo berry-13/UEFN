@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { DaemonInfo } from "./api.ts";
 
@@ -46,14 +46,20 @@ export async function readDaemonInfo(root: string): Promise<(DaemonInfo & { stal
  * True when the daemon described by `info` answers `GET /api/status` with its
  * token. A running pid alone is not proof: the OS may have reused it.
  */
-export async function probeDaemon(info: Pick<DaemonInfo, "port" | "token">, timeoutMs = 1500): Promise<boolean> {
+export async function probeDaemon(info: Pick<DaemonInfo, "port" | "token" | "pid">, timeoutMs = 1500): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${info.port}/api/status`, {
       headers: { authorization: `Bearer ${info.token}` },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    await res.body?.cancel().catch(() => {});
-    return res.ok;
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      return false;
+    }
+    // Any local HTTP service can answer 2xx; only the daemon that wrote
+    // daemon.json reports the same pid in its status payload.
+    const body = (await res.json()) as { daemon?: { pid?: unknown } };
+    return body?.daemon?.pid === info.pid;
   } catch {
     return false;
   }
@@ -115,8 +121,36 @@ export async function acquireDaemonLock(root: string): Promise<DaemonLock> {
     if (attempt > 0 || !(await lockIsStale(root, path, holder))) {
       throw new Error(`a daemon is already running or starting for ${root}${holder ? ` (pid ${holder.pid})` : ""}`);
     }
-    await rm(path, { force: true });
+    if (!(await takeOverLock(path, holder))) {
+      throw new Error(`a daemon is already running or starting for ${root}`);
+    }
   }
+}
+
+/**
+ * Removes the stale lock that was inspected, and only that one. Renaming is
+ * atomic, so of several processes recovering the same stale lock exactly one
+ * moves it aside; if what it moved is not the inspected holder (another
+ * process already replaced it with a fresh lock), it puts that lock back
+ * (`link` fails if a new lock appeared meanwhile) and reports a live holder.
+ */
+async function takeOverLock(path: string, holder: LockContents | undefined): Promise<boolean> {
+  const aside = `${path}.${randomBytes(6).toString("hex")}.stale`;
+  try {
+    await rename(path, aside);
+  } catch (error) {
+    // Someone else moved it first: retry the exclusive create.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  const moved = await readLock(aside);
+  if (holder === undefined || moved?.nonce === holder.nonce) {
+    await rm(aside, { force: true });
+    return true;
+  }
+  await link(aside, path).catch(() => {});
+  await rm(aside, { force: true });
+  return false;
 }
 
 async function readLock(path: string): Promise<LockContents | undefined> {

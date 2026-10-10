@@ -103,3 +103,27 @@ test("an unusable persistence path disables history instead of failing open", as
     await engine.close();
   }
 });
+
+test("compile returns absolute diagnostic paths, resolving relative ones against paths.verse", async () => {
+  const dir = await project("paths:\n  verse: ./Content\n");
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  try {
+    // UEFN reports files relative to the Verse module root (see docs/evidence).
+    (engine.adapter as { compile: () => Promise<unknown> }).compile = async () => ({
+      success: false,
+      durationMs: 1,
+      diagnostics: [
+        { severity: "error", message: "relative", file: "DevTools/game.verse", line: 2 },
+        { severity: "error", message: "absolute", file: "/abs/x.verse" },
+        { severity: "info", message: "no file" },
+      ],
+    });
+    const result = await engine.compile();
+    assert.deepEqual(
+      result.diagnostics.map((d) => d.file),
+      [join(dir, "Content", "DevTools", "game.verse"), "/abs/x.verse", undefined],
+    );
+  } finally {
+    await engine.close();
+  }
+});

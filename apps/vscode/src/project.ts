@@ -1,8 +1,6 @@
-import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { describeFailure, resolveCli, runCli, type CliCommand, type CliRunOptions, type CliRunResult } from "./cli.ts";
-import { resolveVerseDir } from "./mapping.ts";
 import { DaemonHttp, readLiveDaemon } from "./daemon.ts";
 import type { DaemonInfo } from "./types.ts";
 
@@ -71,16 +69,6 @@ export class Project implements vscode.Disposable {
     this.daemonInfo = next;
     if (changed) this.daemonEmitter.fire(next);
     return next;
-  }
-
-  /** The Verse source directory from `paths.verse` in the project config, or undefined when unreadable. */
-  async verseDir(): Promise<string | undefined> {
-    try {
-      const text = await readFile(path.join(this.root, CONFIG_FILE), "utf8");
-      return resolveVerseDir(text, this.root);
-    } catch {
-      return undefined;
-    }
   }
 
   cli(): CliCommand {
