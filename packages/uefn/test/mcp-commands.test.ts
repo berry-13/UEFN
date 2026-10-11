@@ -133,10 +133,13 @@ test("toolset/tool mappings route through call_tool on a meta-tool server", asyn
     assert.equal(adapter.hasTool("ValkyrieToolset.Missing/GetGameState"), false);
     assert.equal(adapter.toolVerified(`${S}/StartSession`), true);
     assert.equal(adapter.toolVerified("ValkyrieToolset.Missing/GetGameState"), true, "a toolset the server denies is checked too");
+    const editor = await adapter.callEditorTool("Scene.Tools", "find_actors", { name: "" });
+    assert.equal(editor.isError, false);
+    assert.equal(editor.text, "Completed");
     await adapter.startSession();
     assert.deepEqual([...adapter.transport().supportedCommands()], ["start_game"]);
     assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true });
-    assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), [`${S}/StartSession`, `${S}/StartGame`]);
+    assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), ["Scene.Tools/find_actors", `${S}/StartSession`, `${S}/StartGame`]);
   } finally {
     await adapter.disconnect();
   }

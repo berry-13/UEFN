@@ -1,7 +1,15 @@
-import { mkdir, writeFile, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { AuditLog, DevToolsEngine, formatCausalTree } from "@uefn-devtools/core";
+import {
+  AuditLog,
+  DevToolsEngine,
+  LEVEL_SNAPSHOT_FILE,
+  diffLevels,
+  formatCausalTree,
+  parseLevelSnapshot,
+  serializeLevelSnapshot,
+} from "@uefn-devtools/core";
 import { buildProfile } from "@uefn-devtools/core";
 import type { RunSummary } from "@uefn-devtools/protocol";
 import {
@@ -292,6 +300,66 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
           ),
         ),
     ),
+  );
+
+  // ── level ───────────────────────────────────────────────────────────────
+  server.registerTool(
+    "uefn_level_snapshot",
+    {
+      description:
+        `Read every actor in the open UEFN level (guid, label, class, folder, tags, transform, device bindings and Verse device settings). ` +
+        `Takes about 45s for 3,000 actors. Filter with class / label substrings; save: true writes ${LEVEL_SNAPSHOT_FILE} (needs modify_project) as the baseline for uefn_level_diff.`,
+      inputSchema: {
+        class: z.string().optional().describe("case-insensitive substring of the class path"),
+        label: z.string().optional().describe("case-insensitive substring of the actor label"),
+        limit: z.number().int().positive().max(5000).default(100),
+        save: z.boolean().default(false),
+      },
+    },
+    guarded("uefn_level_snapshot", "read_project", async (a: { class?: string; label?: string; limit: number; save: boolean }) => {
+      if (a.save && !permissions.modify_project) return fail("save: true needs the modify_project permission");
+      const capture = await lock.run(() => engine.captureLevel());
+      const { snapshot } = capture;
+      const has = (value: string, part?: string) => part === undefined || value.toLowerCase().includes(part.toLowerCase());
+      const matching = snapshot.actors.filter((x) => has(x.class, a.class) && has(x.label, a.label));
+      const classes: Record<string, number> = {};
+      for (const x of snapshot.actors) {
+        const name = x.class.slice(x.class.lastIndexOf(".") + 1);
+        classes[name] = (classes[name] ?? 0) + 1;
+      }
+      const topClasses = Object.fromEntries(Object.entries(classes).sort((p, q) => q[1] - p[1]).slice(0, 30));
+      let saved: string | undefined;
+      if (a.save) {
+        const path = join(engine.root, LEVEL_SNAPSHOT_FILE);
+        await writeFile(path, serializeLevelSnapshot(snapshot));
+        saved = relative(engine.root, path);
+      }
+      return ok({
+        level: snapshot.level,
+        total: snapshot.actors.length,
+        matching: matching.length,
+        classes: topClasses,
+        actors: matching.slice(0, a.limit),
+        truncated: matching.length > a.limit,
+        errors: capture.errors,
+        ...(saved ? { saved } : {}),
+      });
+    }),
+  );
+
+  server.registerTool(
+    "uefn_level_diff",
+    {
+      description: `Compare the saved ${LEVEL_SNAPSHOT_FILE} with the live level: actors added, removed and changed (matched by guid). Use it to verify an edit did exactly what was intended.`,
+    },
+    guarded("uefn_level_diff", "read_project", async () => {
+      const path = join(engine.root, LEVEL_SNAPSHOT_FILE);
+      const text = await readFile(path, "utf8").catch(() => undefined);
+      if (text === undefined) return fail(`${LEVEL_SNAPSHOT_FILE} does not exist; call uefn_level_snapshot with save: true first`);
+      const before = parseLevelSnapshot(text, LEVEL_SNAPSHOT_FILE);
+      const after = (await lock.run(() => engine.captureLevel())).snapshot;
+      return ok(diffLevels(before, after));
+    }),
   );
 
   // ── tests ───────────────────────────────────────────────────────────────

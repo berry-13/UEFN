@@ -114,7 +114,8 @@ attempt's trace), `state.json`, `compile.json` and `session.json`.
 | `uefn_get_project`, `uefn_get_capabilities`, `uefn_get_session_state`, `uefn_get_compile_errors` | read_project |
 | `uefn_get_players`, `uefn_get_player`, `uefn_get_devices`, `uefn_get_device` | read_project |
 | `uefn_get_events`, `uefn_trace_event`, `uefn_wait_for_event`, `uefn_list_tests` | read_project |
-| `uefn_profile` | read_project |
+| `uefn_profile`, `uefn_level_diff` | read_project |
+| `uefn_level_snapshot` | read_project; `save: true` also needs modify_project |
 | `uefn_compile_verse` | compile |
 | `uefn_start_session`, `uefn_stop_session`, `uefn_start_game`, `uefn_stop_game` | start_sessions |
 | `uefn_run_test`, `uefn_run_tests` | run_tests |

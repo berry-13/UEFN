@@ -101,3 +101,49 @@ test("the default profile covers the session the test tools started, not earlier
     await engine.close();
   }
 });
+
+test("level tools snapshot, filter, save and diff the editor level; saving needs modify_project", async () => {
+  const { dir, engine, call } = await connect("full_access");
+  const noEditor = await call("uefn_level_snapshot");
+  assert.equal(noEditor.isError, true);
+  assert.match(noEditor.text, /needs the mcp adapter/);
+
+  let x = 100;
+  const row = (id: string, label: string, cls: string, px: number) => ({
+    id,
+    label,
+    class: cls,
+    path: `/L:P.${label}`,
+    transform: { location: { x: px, y: 0, z: 0 }, rotation: { pitch: 0, yaw: 0, roll: 0 }, scale: { x: 1, y: 1, z: 1 } },
+  });
+  Object.assign(engine.adapter, {
+    callEditorTool: async () => ({
+      isError: false,
+      text: "",
+      json: { returnValue: JSON.stringify({ level: "/L", actors: [row("G1", "Pump", "/D/Pump.Pump_C", x), row("G2", "Tree", "/E/Tree.Tree_C", 0)], errors: [] }) },
+    }),
+  });
+
+  const filtered = await call("uefn_level_snapshot", { class: "pump", save: true });
+  assert.equal(filtered.isError, false, filtered.text);
+  assert.equal(filtered.json.total, 2);
+  assert.deepEqual(filtered.json.actors.map((a: { label: string }) => a.label), ["Pump"]);
+  assert.deepEqual(filtered.json.classes, { Pump_C: 1, Tree_C: 1 });
+  assert.equal(filtered.json.saved, "level.snapshot.json");
+  assert.match(await readFile(join(dir, "level.snapshot.json"), "utf8"), /"label": "Pump"/);
+
+  x = 300;
+  const diff = await call("uefn_level_diff");
+  assert.equal(diff.isError, false, diff.text);
+  assert.deepEqual(diff.json.changed, [{ id: "G1", label: "Pump", fields: { location: [[100, 0, 0], [300, 0, 0]] } }]);
+
+  const ro = await connect("read_only");
+  Object.assign(ro.engine.adapter, { callEditorTool: (engine.adapter as unknown as { callEditorTool: unknown }).callEditorTool });
+  const denied = await ro.call("uefn_level_snapshot", { save: true });
+  assert.equal(denied.isError, true);
+  assert.match(denied.text, /modify_project/);
+  const noBaseline = await ro.call("uefn_level_diff");
+  assert.match(noBaseline.text, /does not exist; call uefn_level_snapshot with save: true first/);
+  await engine.close();
+  await ro.engine.close();
+});
