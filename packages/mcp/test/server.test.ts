@@ -136,6 +136,20 @@ test("level tools snapshot, filter, save and diff the editor level; saving needs
   const diff = await call("uefn_level_diff");
   assert.equal(diff.isError, false, diff.text);
   assert.deepEqual(diff.json.changed, [{ id: "G1", label: "Pump", fields: { location: [[100, 0, 0], [300, 0, 0]] } }]);
+  assert.deepEqual(diff.json.counts, { added: 0, removed: 0, changed: 1 });
+  assert.equal(diff.json.truncated, false);
+  x = 100;
+  Object.assign(engine.adapter, {
+    callEditorTool: async () => ({
+      isError: false,
+      text: "",
+      json: { returnValue: JSON.stringify({ level: "/L", actors: [row("G3", "A", "/C.C", 0), row("G4", "B", "/C.C", 0), row("G5", "C", "/C.C", 0)], errors: [] }) },
+    }),
+  });
+  const limited = await call("uefn_level_diff", { limit: 2 });
+  assert.deepEqual(limited.json.counts, { added: 3, removed: 2, changed: 0 });
+  assert.equal(limited.json.added.length, 2);
+  assert.equal(limited.json.truncated, true);
 
   const ro = await connect("read_only");
   Object.assign(ro.engine.adapter, { callEditorTool: (engine.adapter as unknown as { callEditorTool: unknown }).callEditorTool });
@@ -144,6 +158,11 @@ test("level tools snapshot, filter, save and diff the editor level; saving needs
   assert.match(denied.text, /modify_project/);
   const noBaseline = await ro.call("uefn_level_diff");
   assert.match(noBaseline.text, /does not exist; call uefn_level_snapshot with save: true first/);
+  await mkdir(join(ro.dir, "level.snapshot.json"));
+  const unreadable = await ro.call("uefn_level_diff");
+  assert.equal(unreadable.isError, true);
+  assert.doesNotMatch(unreadable.text, /does not exist/);
+  assert.match(unreadable.text, /EISDIR/);
   await engine.close();
   await ro.engine.close();
 });

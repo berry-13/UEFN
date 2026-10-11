@@ -8,6 +8,10 @@
  * trips otherwise.
  */
 
+import { randomBytes } from "node:crypto";
+import { rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+
 export const LEVEL_SNAPSHOT_VERSION = 1;
 export const LEVEL_SNAPSHOT_FILE = "level.snapshot.json";
 
@@ -125,7 +129,7 @@ function normalizeActor(row: Record<string, unknown>): LevelActor {
   const tags = row["tags"];
   if (Array.isArray(tags) && tags.length > 0) actor.tags = tags.map(String).sort();
   const layers = row["dataLayers"];
-  if (Array.isArray(layers) && layers.length > 0) actor.dataLayers = layers;
+  if (Array.isArray(layers) && layers.length > 0) actor.dataLayers = canonical(layers) as unknown[];
   const xf = row["transform"];
   if (isRecord(xf)) {
     const location = vec(xf["location"], ["x", "y", "z"], 100);
@@ -136,9 +140,9 @@ function normalizeActor(row: Record<string, unknown>): LevelActor {
     if (scale) actor.scale = scale;
   }
   const bindings = meaningful(row["bindings"]);
-  if (bindings !== undefined) actor.bindings = bindings;
+  if (bindings !== undefined) actor.bindings = canonical(bindings);
   const settings = meaningful(row["settings"]);
-  if (settings !== undefined) actor.settings = settings;
+  if (settings !== undefined) actor.settings = canonical(settings);
   return actor;
 }
 
@@ -174,10 +178,36 @@ export function parseLevelSnapshot(text: string, source = "snapshot"): LevelSnap
   } catch (error) {
     throw new Error(`${source} is not JSON: ${(error as Error).message}`);
   }
-  if (!isRecord(raw) || raw["version"] !== LEVEL_SNAPSHOT_VERSION || !Array.isArray(raw["actors"])) {
+  if (!isRecord(raw) || raw["version"] !== LEVEL_SNAPSHOT_VERSION || !Array.isArray(raw["actors"]) || typeof raw["level"] !== "string") {
     throw new Error(`${source} is not a version ${LEVEL_SNAPSHOT_VERSION} level snapshot`);
   }
+  const ids = new Set<string>();
+  raw["actors"].forEach((actor: unknown, i) => {
+    const bad = (why: string) => new Error(`${source}: actor ${i} ${why}`);
+    if (!isRecord(actor)) throw bad("is not an object");
+    for (const key of ["id", "label", "class", "path"]) {
+      if (typeof actor[key] !== "string") throw bad(`has no string '${key}'`);
+    }
+    const id = actor["id"] as string;
+    if (id === "" || ids.has(id)) throw bad(id === "" ? "has an empty id" : `repeats id ${id}`);
+    ids.add(id);
+  });
   return raw as unknown as LevelSnapshot;
+}
+
+/**
+ * Writes a snapshot through a new temporary file renamed over the target, so a
+ * symlink at the target is replaced rather than followed out of the project.
+ */
+export async function writeLevelSnapshot(path: string, snapshot: LevelSnapshot): Promise<void> {
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
+  await writeFile(tmp, serializeLevelSnapshot(snapshot), { flag: "wx" });
+  try {
+    await rename(tmp, path);
+  } catch (error) {
+    await rm(tmp, { force: true });
+    throw error;
+  }
 }
 
 /** Serialised with one stable key order, so the same level always gives the same bytes. */
@@ -200,7 +230,7 @@ export interface LevelDiff {
   levels?: [string, string];
 }
 
-const COMPARED: (keyof LevelActor)[] = ["label", "class", "folder", "tags", "dataLayers", "location", "rotation", "scale", "bindings", "settings"];
+const COMPARED: (keyof LevelActor)[] = ["label", "class", "path", "folder", "tags", "dataLayers", "location", "rotation", "scale", "bindings", "settings"];
 
 /** Matches actors by guid, so a moved or renamed actor is a change, not a remove and an add. */
 export function diffLevels(before: LevelSnapshot, after: LevelSnapshot): LevelDiff {
@@ -220,6 +250,19 @@ export function diffLevels(before: LevelSnapshot, after: LevelSnapshot): LevelDi
   }
   if (before.level !== after.level) diff.levels = [before.level, after.level];
   return diff;
+}
+
+/** The diff with each list cut to `limit` entries, plus the full counts. */
+export function limitLevelDiff(diff: LevelDiff, limit: number) {
+  const counts = { added: diff.added.length, removed: diff.removed.length, changed: diff.changed.length };
+  return {
+    ...(diff.levels ? { levels: diff.levels } : {}),
+    counts,
+    added: diff.added.slice(0, limit),
+    removed: diff.removed.slice(0, limit),
+    changed: diff.changed.slice(0, limit),
+    truncated: Object.values(counts).some((n) => n > limit),
+  };
 }
 
 export function levelDiffIsEmpty(diff: LevelDiff): boolean {
@@ -251,7 +294,14 @@ function fmt(value: unknown): string {
 }
 
 function sameValue(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+}
+
+/** Object keys sorted at every depth, since their order carries no meaning. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((k) => [k, canonical(value[k])]));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

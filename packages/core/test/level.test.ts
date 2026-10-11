@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   SNAPSHOT_SCRIPT,
@@ -6,9 +9,11 @@ import {
   diffLevels,
   formatLevelDiff,
   levelDiffIsEmpty,
+  limitLevelDiff,
   normalizeCapture,
   parseLevelSnapshot,
   serializeLevelSnapshot,
+  writeLevelSnapshot,
   type EditorToolCaller,
 } from "@uefn-devtools/core";
 
@@ -102,4 +107,50 @@ test("captureLevel runs the batch script and reads UEFN's string returnValue", a
   assert.deepEqual(calls, [{ toolset: "editor_toolset.toolsets.programmatic.ProgrammaticToolset", tool: "execute_tool_script", script: SNAPSHOT_SCRIPT, timeoutMs: 600_000 }]);
   const failing: EditorToolCaller = { callEditorTool: async () => ({ isError: true, text: "Python is disabled" }) };
   await assert.rejects(captureLevel(failing), /reading the level failed: Python is disabled/);
+});
+
+test("diff reports a changed actor path and ignores object key order", () => {
+  const before = normalizeCapture({ level: L, actors: [row({ bindings: [{ from: "A", to: "B" }], settings: { b: 1, a: { y: 2, x: 1 } } })] }).snapshot;
+  const after = normalizeCapture({ level: L, actors: [row({ path: `${L}:PersistentLevel.Pump_2`, bindings: [{ to: "B", from: "A" }], settings: { a: { x: 1, y: 2 }, b: 1 } })] }).snapshot;
+  assert.equal(serializeLevelSnapshot(before).replace("Pump_1", "Pump_2"), serializeLevelSnapshot(after), "keys are stored sorted");
+  assert.deepEqual(diffLevels(before, after).changed, [
+    { id: "G1", label: "Pump", fields: { path: [`${L}:PersistentLevel.Pump_1`, `${L}:PersistentLevel.Pump_2`] } },
+  ]);
+  const unsorted = { version: 1 as const, level: L, actors: [{ id: "G1", label: "P", class: "C", path: "p", settings: { b: 1, a: 2 } }] };
+  const sorted = { ...unsorted, actors: [{ ...unsorted.actors[0]!, settings: { a: 2, b: 1 } }] };
+  assert.equal(levelDiffIsEmpty(diffLevels(unsorted, sorted)), true);
+});
+
+test("a snapshot file with malformed or repeated actors is refused", () => {
+  const file = (actors: unknown[]) => JSON.stringify({ version: 1, level: L, actors });
+  const ok = { id: "G1", label: "P", class: "C", path: "p" };
+  assert.throws(() => parseLevelSnapshot(file([ok, "x"]), "f.json"), /f\.json: actor 1 is not an object/);
+  assert.throws(() => parseLevelSnapshot(file([{ ...ok, class: undefined }]), "f.json"), /actor 0 has no string 'class'/);
+  assert.throws(() => parseLevelSnapshot(file([ok, { ...ok }]), "f.json"), /actor 1 repeats id G1/);
+  assert.throws(() => parseLevelSnapshot(file([{ ...ok, id: "" }]), "f.json"), /actor 0 has an empty id/);
+  assert.throws(() => parseLevelSnapshot(JSON.stringify({ version: 1, actors: [] }), "f.json"), /not a version 1 level snapshot/);
+  assert.equal(parseLevelSnapshot(file([ok]), "f.json").actors.length, 1);
+});
+
+test("writing a snapshot replaces a symlink at the target instead of following it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "level-write-"));
+  const outside = join(dir, "outside.txt");
+  await writeFile(outside, "keep");
+  const target = join(dir, "level.snapshot.json");
+  await symlink(outside, target);
+  const snapshot = { version: 1 as const, level: L, actors: [] };
+  await writeLevelSnapshot(target, snapshot);
+  assert.equal(await readFile(outside, "utf8"), "keep");
+  await assert.rejects(readlink(target), { code: "EINVAL" }, "the link itself was replaced by a file");
+  assert.equal(await readFile(target, "utf8"), serializeLevelSnapshot(snapshot));
+});
+
+test("limitLevelDiff cuts each list and keeps the full counts", () => {
+  const actor = (id: string) => ({ id, label: id, class: "C", path: id });
+  const diff = diffLevels({ version: 1, level: L, actors: [actor("a"), actor("b")] }, { version: 1, level: L, actors: [actor("c"), actor("d"), actor("e")] });
+  const cut = limitLevelDiff(diff, 2);
+  assert.deepEqual(cut.counts, { added: 3, removed: 2, changed: 0 });
+  assert.deepEqual(cut.added.map((a) => a.id), ["c", "d"]);
+  assert.equal(cut.truncated, true);
+  assert.equal(limitLevelDiff(diff, 3).truncated, false);
 });

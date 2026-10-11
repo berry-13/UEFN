@@ -41,7 +41,7 @@ The MCP server has the same pair:
 - `uefn_level_snapshot` returns the level, actor counts per class and the
   actors matching optional `class` / `label` substrings (up to `limit`).
   `save: true` writes `level.snapshot.json` and needs `modify_project`.
-- `uefn_level_diff` compares the saved snapshot with the live level.
+- `uefn_level_diff` compares the saved snapshot with the live level. Each list is cut to `limit` entries (default 100) and `counts` holds the full totals.
 
 The intended loop: save a snapshot, make an edit through UEFN's editor tools,
 then diff to check the edit changed exactly what was meant.

@@ -7,8 +7,9 @@ import {
   LEVEL_SNAPSHOT_FILE,
   diffLevels,
   formatCausalTree,
+  limitLevelDiff,
   parseLevelSnapshot,
-  serializeLevelSnapshot,
+  writeLevelSnapshot,
 } from "@uefn-devtools/core";
 import { buildProfile } from "@uefn-devtools/core";
 import type { RunSummary } from "@uefn-devtools/protocol";
@@ -331,7 +332,7 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
       let saved: string | undefined;
       if (a.save) {
         const path = join(engine.root, LEVEL_SNAPSHOT_FILE);
-        await writeFile(path, serializeLevelSnapshot(snapshot));
+        await writeLevelSnapshot(path, snapshot);
         saved = relative(engine.root, path);
       }
       return ok({
@@ -350,15 +351,23 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
   server.registerTool(
     "uefn_level_diff",
     {
-      description: `Compare the saved ${LEVEL_SNAPSHOT_FILE} with the live level: actors added, removed and changed (matched by guid). Use it to verify an edit did exactly what was intended.`,
+      description:
+        `Compare the saved ${LEVEL_SNAPSHOT_FILE} with the live level: actors added, removed and changed (matched by guid). Use it to verify an edit did exactly what was intended. ` +
+        "Each list is cut to limit entries; counts has the full totals.",
+      inputSchema: {
+        limit: z.number().int().positive().max(5000).default(100),
+      },
     },
-    guarded("uefn_level_diff", "read_project", async () => {
+    guarded("uefn_level_diff", "read_project", async (a: { limit: number }) => {
       const path = join(engine.root, LEVEL_SNAPSHOT_FILE);
-      const text = await readFile(path, "utf8").catch(() => undefined);
+      const text = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
       if (text === undefined) return fail(`${LEVEL_SNAPSHOT_FILE} does not exist; call uefn_level_snapshot with save: true first`);
       const before = parseLevelSnapshot(text, LEVEL_SNAPSHOT_FILE);
       const after = (await lock.run(() => engine.captureLevel())).snapshot;
-      return ok(diffLevels(before, after));
+      return ok(limitLevelDiff(diffLevels(before, after), a.limit));
     }),
   );
 

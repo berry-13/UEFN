@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import {
   LEVEL_SNAPSHOT_FILE,
@@ -7,7 +7,7 @@ import {
   isEditorToolCaller,
   levelDiffIsEmpty,
   parseLevelSnapshot,
-  serializeLevelSnapshot,
+  writeLevelSnapshot,
   type DevToolsEngine,
   type LevelCapture,
   type LevelSnapshot,
@@ -34,7 +34,7 @@ export const level: Command = {
         if (files.length > 0) throw new UsageError(USAGE);
         const capture = await live(engine);
         const path = resolve(engine.root, str(values, "out") ?? LEVEL_SNAPSHOT_FILE);
-        await writeFile(path, serializeLevelSnapshot(capture.snapshot));
+        await writeLevelSnapshot(path, capture.snapshot);
         const data = { file: relative(engine.root, path), level: capture.snapshot.level, actors: capture.snapshot.actors.length, errors: capture.errors };
         print(values, data, () => {
           console.log(`Wrote ${data.file}: ${data.actors} actor(s) in ${data.level}`);
