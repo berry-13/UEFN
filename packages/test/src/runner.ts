@@ -92,12 +92,14 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     });
 
     stage("VALIDATING");
+    // Load errors first: a requested test in a file that failed to load is
+    // missing because of that error, which is the actionable message.
+    if (errors.length > 0) {
+      throw new StageError("VALIDATING", errors.map((e) => `${relative(engine.root, e.file)}: ${e.message}`).join("\n"));
+    }
     if (missingIds.length > 0) {
       // Every explicitly requested test must run; a typo must not pass silently.
       throw new StageError("VALIDATING", `no test with id ${missingIds.map((id) => `'${id}'`).join(", ")}`);
-    }
-    if (errors.length > 0) {
-      throw new StageError("VALIDATING", errors.map((e) => `${relative(engine.root, e.file)}: ${e.message}`).join("\n"));
     }
     const seen = new Map<string, string>();
     for (const t of tests) {
@@ -309,7 +311,13 @@ async function runAttempt(
 
   enter("CLEANUP");
   if (engine.state.phase === "playing" && engine.supportsCommand("end_game")) {
-    await engine.command({ type: "end_game" }).catch(() => {});
+    // Wait for the match to end, as GameFixture.end() does, so a repeat or
+    // retry does not start while this match (and its scenario device) winds down.
+    const from = engine.events.mark();
+    const ended = await engine.command({ type: "end_game" }).catch(() => undefined);
+    if (ended && engine.state.phase === "playing") {
+      await engine.waitForEvent({ type: "game.ended" }, { timeoutMs: ctx.expectTimeout, fromIndex: from }).catch(() => {});
+    }
   }
 
   enter(status === "passed" ? "PASSED" : "FAILED");

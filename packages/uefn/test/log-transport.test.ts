@@ -175,3 +175,16 @@ test("a match state learned from UEFN emits the missing lifecycle event once", a
     ["game.ended", { minigameState: "PostGameEnd", alreadyEnded: true }],
   ]);
 });
+
+test("after the engine forgets its state, a match UEFN reports running is announced again", async () => {
+  const transport = new LogFileTransport({ path: "/nonexistent/uefn.log", clock: fixedClock() });
+  transport.ingest(REAL.inProgress);
+  transport.assumeGameState(true);
+  transport.resetObservedState();
+  transport.assumeGameState(true);
+  const events = await drain(transport);
+  assert.deepEqual(events.map((e) => [e.type, e.payload["alreadyRunning"]]), [
+    ["game.started", undefined],
+    ["game.started", true],
+  ]);
+});

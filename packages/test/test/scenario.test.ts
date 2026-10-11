@@ -55,6 +55,11 @@ test("scenario events carry the test id, the plan fingerprint and step arguments
   assert.match(g.verse, /Step\(1, "teleport", "player1", "A"\)/);
   const moved = generateScenario(parse({ ...doc, steps: [{ teleport: { player: 1, location: "Sky" } }] }), { id: "tagged", locations, startDelayMs: 0 });
   assert.notEqual(moved.fingerprint, g.fingerprint, "a changed argument changes the fingerprint");
+  const delayed = generateScenario(parse(doc), { id: "tagged", locations, startDelayMs: 3000 });
+  assert.notEqual(delayed.fingerprint, g.fingerprint, "a changed start delay changes the fingerprint");
+  const waited = (wait: string) =>
+    generateScenario(parse({ ...doc, steps: [{ wait }, ...doc.steps] }), { id: "tagged", locations, startDelayMs: 0 }).fingerprint;
+  assert.notEqual(waited("1s"), waited("2s"), "a changed wait changes the fingerprint");
 });
 
 test("teleport and enter spawn the player first, as the host fixtures do", () => {
@@ -86,7 +91,7 @@ test("teleport and enter spawn the player first, as the host fixtures do", () =>
   );
 });
 
-test("each player's character is captured once and reused", () => {
+test("each player is captured once and the character is read at every step", () => {
   const g = generateScenario(
     parse({
       name: "Bind",
@@ -95,11 +100,26 @@ test("each player's character is captured once and reused", () => {
     }),
     { id: "bind", locations, startDelayMs: 0 },
   );
-  assert.match(g.verse, /var Characters:\[\]fort_character = array\{\}/);
-  assert.equal(g.verse.match(/CharacterAt\[0\]/g)?.length, 1);
-  assert.equal(g.verse.match(/CharacterAt\[1\]/g)?.length, 1);
-  assert.equal(g.verse.match(/set Characters \+= array\{Character\}/g)?.length, 2);
-  assert.match(g.verse, /if \(Character := Characters\[1\]\):\n\s+Character\.Damage/);
+  assert.match(g.verse, /var Players:\[\]player = array\{\}/);
+  assert.equal(g.verse.match(/GetPlayers\(\)\[0\]/g)?.length, 1);
+  assert.equal(g.verse.match(/GetPlayers\(\)\[1\]/g)?.length, 1);
+  assert.equal(g.verse.match(/set Players \+= array\{Player\}/g)?.length, 2);
+  assert.match(g.verse, /if \(Player := Players\[1\], Character := Player\.GetFortCharacter\[\]\):\n\s+Character\.Damage/);
+});
+
+test("a respawn after an elimination acts on the player's current character", () => {
+  const g = generateScenario(
+    parse({
+      name: "Respawn",
+      setup: ["start_game", { spawn_player: { id: 1 } }],
+      steps: [{ eliminate: { player: 1 } }, { wait: "5s" }, { teleport: { player: 1, location: "Sky" } }],
+    }),
+    { id: "respawn", locations, startDelayMs: 0 },
+  );
+  // Every step after the first reads the character from the captured player,
+  // never from a character cached before the elimination.
+  assert.equal(g.verse.match(/Character := Player\.GetFortCharacter\[\]/g)?.length, g.plan.length);
+  assert.doesNotMatch(g.verse, /fort_character = array/);
 });
 
 test("leave uses <area>.outside when configured", () => {

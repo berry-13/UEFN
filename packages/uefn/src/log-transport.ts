@@ -118,6 +118,14 @@ export class LogFileTransport implements RuntimeTransport {
     }
   }
 
+  /**
+   * The engine forgot the match state, so the next lifecycle line or
+   * assumeGameState call must be reported again rather than deduplicated.
+   */
+  resetObservedState(): void {
+    this.minigameState = undefined;
+  }
+
   private async poll(): Promise<void> {
     if (this.reading) return;
     this.reading = true;

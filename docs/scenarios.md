@@ -80,18 +80,20 @@ player moved.
   in order and fails on a mismatch (`was 'damage_player' in game but the
   test sent 'teleport'`), a device-side failure, or a timeout.
 - Every scenario event carries the test id (`scenario`); `scenario.started`
-  also carries a fingerprint of the plan (`plan`), and each `scenario.step`
+  also carries a fingerprint of the plan, its waits and the start delay
+  (`plan`), and each `scenario.step`
   the argument it was generated from (`arg`: location, area, damage amount,
   eliminator). The host locks onto the first scenario that starts in a match
   and ignores the others' reports, but fails the next step if a second
   scenario, or a second build of the same one, starts in that match. A step
   whose argument differs from what the test sends fails as a stale device:
   regenerate and recompile. `game.ended` releases the lock.
-- A player's character is captured at the player's first step and reused,
-  so players joining or leaving later do not shift who a step acts on. After
-  an `eliminate`, the next `teleport` / `enter` adds a spawn step that
-  reports the captured character: the island must respawn the player, so put
-  a `wait` before it.
+- A player is captured at the player's first step and reused, so players
+  joining or leaving later do not shift who a step acts on. Each step reads
+  the player's current character, so after an `eliminate` the next
+  `teleport` / `enter` (which adds a spawn step) acts on the respawned
+  character. The island must respawn the player first, so put a `wait`
+  before it; a step whose player has no character fails.
 - Because `wait_for` is not mirrored, put a `wait` before an action that
   must happen after an outcome.
 - Teams in `spawn_player` are not enforced; players join by island settings.

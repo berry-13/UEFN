@@ -156,6 +156,10 @@ export class ScenarioTransport implements RuntimeTransport {
     return [...new Set([...this.inner.supportedCommands(), ...SCENARIO_ACTIONS])];
   }
 
+  resetObservedState(): void {
+    this.inner.resetObservedState?.();
+  }
+
   private next(index: number): Promise<Report | undefined> {
     const find = () => this.reports.find((r) => r.index === index);
     const found = find();
@@ -172,6 +176,8 @@ export class ScenarioTransport implements RuntimeTransport {
       const check = () => {
         const r = find();
         if (r) finish(r);
+        // A second scenario device fails the step now, not at the timeout.
+        else if (this.conflict) finish(undefined);
       };
       this.waiters.add(check);
       const timer = setTimeout(() => finish(undefined), Math.max(0, this.options.clock.toWallMs(this.options.stepTimeoutMs)));

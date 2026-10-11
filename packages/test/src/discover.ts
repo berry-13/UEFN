@@ -20,6 +20,7 @@ export async function findTestFiles(testsDir: string): Promise<string[]> {
  * repeatedly: keep each file's definitions and re-import only when it changed.
  */
 const loaded = new Map<string, { mtimeMs: number; tests: TestDefinition[]; failed?: boolean }>();
+let reloads = 0;
 
 /** Loads TypeScript tests through Node's type stripping and YAML tests through the schema. */
 export async function loadTests(files: readonly string[]): Promise<DiscoveryResult> {
@@ -40,7 +41,8 @@ export async function loadTests(files: readonly string[]): Promise<DiscoveryResu
         globalState.loadingFile = file;
         const url = pathToFileURL(file);
         // A changed or previously failed file gets a fresh module instance; the first load keeps the plain URL.
-        if (cached) url.search = `?mtime=${mtimeMs}`;
+        // Node caches a rejected import by URL, so every reload gets its own.
+        if (cached) url.search = `?mtime=${mtimeMs}&load=${++reloads}`;
         try {
           await import(url.href);
         } catch (error) {

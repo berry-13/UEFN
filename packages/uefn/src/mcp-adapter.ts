@@ -484,6 +484,10 @@ class McpCommandTransport implements RuntimeTransport {
   supportedCommands(): readonly RuntimeCommand["type"][] {
     return [...this.adapter.gameCommands(), ...this.inner.supportedCommands()];
   }
+
+  resetObservedState(): void {
+    this.inner.resetObservedState();
+  }
 }
 
 /**

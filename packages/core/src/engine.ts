@@ -320,6 +320,7 @@ export class DevToolsEngine {
   /** Forgets derived state (not the event log) before a test starts. */
   resetObservedState(): void {
     this.liveState = emptyGameState();
+    if (this.currentSession) this.adapter.transport().resetObservedState?.();
   }
 
   /**

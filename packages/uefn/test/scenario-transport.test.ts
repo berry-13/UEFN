@@ -69,3 +69,14 @@ test("a stale device is detected by its plan fingerprint or step argument", asyn
   const stale = await u.command({ type: "damage_player", player: "player1", amount: 30 });
   assert.match(stale.error!, /ran with '25' in game but the test sent '30'; the placed device is stale/);
 });
+
+test("a second scenario device fails a waiting step at once, not at the timeout", async () => {
+  const t = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 60_000 });
+  t.observe(ev("scenario.started", { scenario: "mine", plan: "aaa", steps: 1 }));
+  const started = Date.now();
+  const pending = t.command({ type: "spawn_player", player: "player1" });
+  t.observe(ev("scenario.started", { scenario: "other", plan: "bbb", steps: 1 }));
+  const result = await pending;
+  assert.match(result.error!, /'mine' and 'other' both run in this match/);
+  assert.ok(Date.now() - started < 1000);
+});

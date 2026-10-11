@@ -22,6 +22,8 @@ export interface RuntimeTransport {
   command(command: RuntimeCommand): Promise<CommandResult>;
   /** Command types this transport can execute. */
   supportedCommands(): readonly RuntimeCommand["type"][];
+  /** The engine forgot its derived state; drop what the transport deduplicates against it. */
+  resetObservedState?(): void;
 }
 
 export type CapabilityStatus = "DIRECT" | "INSTRUMENTED" | "DERIVED" | "BLOCKED" | "UNKNOWN";

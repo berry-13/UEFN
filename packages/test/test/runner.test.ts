@@ -185,3 +185,57 @@ test("an unknown id among several requested ids fails validation instead of pass
   assert.equal(summary.failedStage, "VALIDATING");
   assert.match(summary.error ?? "", /no test with id 'capture-b-typo'/);
 });
+
+test("a requested test in a file that fails to load reports the load error", async () => {
+  const dir = await project(CONFIG(), { "a.test.yaml": YAML_TEST, "b.test.yaml": "name: [unclosed\n" });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const summary = await runTests(engine, { ids: ["capture-b"], skipBuild: true });
+  await engine.close();
+  assert.equal(summary.failedStage, "VALIDATING");
+  assert.match(summary.error ?? "", /b\.test\.yaml/);
+  assert.doesNotMatch(summary.error ?? "", /no test with id/);
+});
+
+test("cleanup waits for the match to end before the run moves on", async () => {
+  const dir = await project(CONFIG(), { "a.test.yaml": YAML_TEST });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  // Like UEFN: StopGame returns before the log reports the match ended.
+  const real = engine.adapter.transport.bind(engine.adapter);
+  engine.adapter.transport = () => {
+    const inner = real();
+    return {
+      ...inner,
+      name: inner.name,
+      start: () => inner.start(),
+      stop: () => inner.stop(),
+      receive: () => inner.receive(),
+      supportedCommands: () => inner.supportedCommands(),
+      command: async (command) => {
+        if (command.type !== "end_game") return inner.command(command);
+        setTimeout(() => void inner.command(command), 50);
+        return { ok: true };
+      },
+    };
+  };
+  try {
+    const summary = await runTests(engine, { skipBuild: true, keepSession: true });
+    assert.equal(summary.status, "passed", JSON.stringify(summary, null, 2));
+    assert.notEqual(engine.state.phase, "playing");
+  } finally {
+    await engine.close();
+  }
+});
+
+test("a test file that keeps failing to load is imported afresh on every retry", async () => {
+  const flag = join(tmpdir(), `uefn-ready-${process.pid}-${Date.now()}`);
+  const body = `import { existsSync } from "node:fs";\nimport { test } from "@uefn-devtools/test";\nif (!existsSync(${JSON.stringify(flag)})) throw new Error("not ready");\ntest("ready", async () => {});\n`;
+  const dir = await project(CONFIG(), { "flaky.test.ts": body });
+  await mkdir(join(dir, "node_modules", "@uefn-devtools"), { recursive: true });
+  const { symlink } = await import("node:fs/promises");
+  await symlink(new URL("..", import.meta.url).pathname, join(dir, "node_modules", "@uefn-devtools", "test"));
+  const file = join(dir, "Tests", "flaky.test.ts");
+  for (let i = 0; i < 3; i++) assert.match((await loadTests([file])).errors[0]?.message ?? "", /not ready/);
+  // The failure was transient; the file itself did not change.
+  await writeFile(flag, "");
+  assert.deepEqual((await loadTests([file])).tests.map((t) => t.name), ["ready"]);
+});
