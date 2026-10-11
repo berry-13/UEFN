@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { request } from "node:http";
-import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -27,7 +27,7 @@ async function project() {
   return dir;
 }
 
-async function start(options: { staticDir?: string } = {}) {
+async function start(options: { staticDir?: string; onShutdown?: () => void } = {}) {
   const dir = await project();
   const engine = await DevToolsEngine.open({ cwd: dir });
   const daemon = new DevToolsDaemon({ engine, ...options });
@@ -232,6 +232,62 @@ test("serves static files without escaping the static root", async () => {
     assert.equal((await first.json()).token, info.token);
     assert.equal((await exchange(ticket)).status, 401);
     assert.equal((await exchange("forged")).status, 401);
+  } finally {
+    await close();
+  }
+});
+
+test("a static file that cannot be opened yields a 500 and the daemon survives", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => {
+  const dir = await project();
+  const site = join(dir, "site");
+  await mkdir(site);
+  await writeFile(join(site, "index.html"), "<!doctype html>");
+  await writeFile(join(site, "locked.js"), "export {};");
+  await chmod(join(site, "locked.js"), 0o000);
+  const { info, close } = await start({ staticDir: site });
+  try {
+    const url = `http://127.0.0.1:${info.port}`;
+    const locked = await fetch(`${url}/locked.js`);
+    assert.equal(locked.status, 500);
+    await locked.text();
+    assert.equal((await fetch(`${url}/index.html`)).status, 200);
+  } finally {
+    await close();
+  }
+});
+
+test("stream reconnect prefers Last-Event-ID over fromIndex", async () => {
+  const { engine, info, client, close } = await start();
+  try {
+    await client.runTests({ filter: "capture" });
+    const last = engine.events.size - 2;
+    assert.ok(last >= 1);
+    const res = await fetch(`http://127.0.0.1:${info.port}/api/stream?token=${info.token}&fromIndex=0`, {
+      headers: { "last-event-id": String(last) },
+    });
+    const reader = res.body!.getReader();
+    let text = "";
+    while (!text.includes("event: session")) text += new TextDecoder().decode((await reader.read()).value);
+    await reader.cancel();
+    const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1]));
+    assert.deepEqual(ids, [last + 1]);
+  } finally {
+    await close();
+  }
+});
+
+test("shutdown waits for an in-progress run", async () => {
+  let stopped = false;
+  const { client, close } = await start({ onShutdown: () => void (stopped = true) });
+  try {
+    const run = client.runTests({ filter: "capture" });
+    await new Promise((r) => setTimeout(r, 50));
+    const shutdown = client.shutdown();
+    const summary = await run;
+    assert.equal(summary.status, "passed", JSON.stringify(summary.error ?? summary.tests));
+    await shutdown;
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(stopped, true);
   } finally {
     await close();
   }

@@ -48,6 +48,9 @@ export class EventsProvider implements vscode.TreeDataProvider<EventNode> {
   }
 
   add(event: RuntimeEvent): void {
+    // Profiler samples arrive continuously and would push gameplay events out
+    // of the capped list; `uefn profile` and the dashboard cover them.
+    if (event.type.startsWith("perf.")) return;
     this.events.unshift(event);
     if (this.events.length > MAX_EVENTS) this.events.length = MAX_EVENTS;
     // Coalesce bursts into one tree refresh.
@@ -123,6 +126,7 @@ export class StateProvider implements vscode.TreeDataProvider<StateNode> {
   readonly onDidChangeTreeData = this.emitter.event;
   private state: GameState | undefined;
   private error: string | undefined;
+  private requestSeq = 0;
   private pending: NodeJS.Timeout | undefined;
   private readonly project: Project;
 
@@ -131,15 +135,19 @@ export class StateProvider implements vscode.TreeDataProvider<StateNode> {
   }
 
   async refresh(): Promise<void> {
+    const seq = ++this.requestSeq;
     const client = this.project.client();
     if (!client) {
       this.state = undefined;
       this.error = undefined;
     } else {
       try {
-        this.state = await client.state();
+        const state = await client.state();
+        if (seq !== this.requestSeq) return;
+        this.state = state;
         this.error = undefined;
       } catch (error) {
+        if (seq !== this.requestSeq) return;
         this.error = (error as Error).message;
       }
     }
@@ -205,7 +213,7 @@ export class StateProvider implements vscode.TreeDataProvider<StateNode> {
             d.state ?? (d.enabled ? "enabled" : "disabled"),
             d.state && !d.enabled ? "disabled" : undefined,
             d.owner !== undefined ? `owner team ${d.owner}` : undefined,
-            d.progress !== undefined ? `progress ${Math.round(d.progress * 100)}%` : undefined,
+            d.progress !== undefined ? `progress ${Math.round(d.progress)}%` : undefined,
             d.triggerCount ? `triggered ${d.triggerCount}x` : undefined,
           ]
             .filter(Boolean)

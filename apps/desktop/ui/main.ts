@@ -105,11 +105,18 @@ function applySnapshot(snapshot: SessionSnapshot): void {
   renderStatus();
 }
 
+let statusRequest = 0;
+let statusApplied = 0;
 const refreshStatus = throttle(() => {
+  const seq = ++statusRequest;
+  const requestedAt = Date.now();
   api.status().then(
     (s) => {
+      if (seq < statusApplied) return;
+      statusApplied = seq;
       status = s;
       renderStatus();
+      tests.reconcile(s.busy, requestedAt);
     },
     () => {},
   );
@@ -160,9 +167,15 @@ buttons.stop.addEventListener("click", () =>
 
 // ── live state ──────────────────────────────────────────────────────────────
 
+// Responses can arrive out of order; only the newest request may be applied.
+let stateRequest = 0;
+let stateApplied = 0;
 const refreshState = throttle(() => {
+  const seq = ++stateRequest;
   api.state().then(
     (state) => {
+      if (seq < stateApplied) return;
+      stateApplied = seq;
       renderState(liveState, state);
       timeTravel.setLiveState(state);
     },

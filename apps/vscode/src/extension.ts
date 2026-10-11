@@ -79,7 +79,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<UefnDe
       return;
     }
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "UEFN: Starting daemon" }, async () => {
-      const { cli, args, result } = await project.run(["daemon", "start", "--detach"]);
+      const { cli, args, result } = await project.run(["daemon", "start", "--detach", "--ui"]);
       if (result.code !== 0) {
         void vscode.window.showErrorMessage(`Could not start the UEFN daemon: ${describeFailure(cli, args, result)}`);
         return;

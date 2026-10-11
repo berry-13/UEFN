@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -138,4 +138,44 @@ test("mcp connection failures are reported with a timeout guard", async () => {
   assert.equal(status(report, "mcp.connect")?.status, "fail");
   assert.match(status(report, "mcp.connect")!.detail, /timed out/);
   assert.ok(Date.now() - started < 15_000);
+});
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test("doctor stops the MCP server child when the connection times out", async () => {
+  const dir = await project({ "Verse/devtools.verse": "devtools_emitter<public> := class:\n    Hello<public>():void = {}\n", "Tests/.keep": "", "logs/.keep": "" });
+  const pidFile = join(dir, "child.pid");
+  const script = `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`;
+  await writeFile(
+    join(dir, "uefn-devtools.config.yaml"),
+    ["adapter: mcp", "mcp:", `  command: ${JSON.stringify(process.execPath)}`, `  args: ["-e", ${JSON.stringify(script)}]`, "runtime:", "  log_path: ./logs/UEFN.log", ""].join("\n"),
+  );
+  const report = await runDoctor(undefined, { cwd: dir, connect: true, connectTimeoutMs: 1500 });
+  assert.equal(status(report, "mcp.connect")?.status, "fail");
+  assert.match(status(report, "mcp.connect")!.detail, /timed out/);
+  const pid = Number(await readFile(pidFile, "utf8"));
+  assert.ok(pid > 0);
+  for (let i = 0; i < 50 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(alive(pid), false, "MCP server child must not outlive the doctor run");
+});
+
+test("a throwing test loader becomes a failed check instead of losing the report", async () => {
+  const dir = await project({ "uefn-devtools.config.yaml": CONFIG, "Verse/a.verse": "a := class(creative_device){}\n", "Tests/a.test.yaml": VALID_TEST });
+  const report = await runDoctor(undefined, {
+    cwd: dir,
+    loadTests: async () => {
+      throw new Error("loader exploded");
+    },
+  });
+  assert.equal(status(report, "tests.discover")?.status, "fail");
+  assert.match(status(report, "tests.discover")!.detail, /loader exploded/);
+  assert.ok(status(report, "verse.runtime"));
+  assert.equal(report.ok, false);
 });
