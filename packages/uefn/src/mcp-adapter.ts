@@ -33,7 +33,7 @@ export interface McpAdapterOptions {
 /** Log bytes searched for the hello of a session that was already running. */
 const BACKFILL_BYTES = 4 * 1024 * 1024;
 
-interface ToolOutput {
+export interface ToolOutput {
   isError: boolean;
   text: string;
   json?: unknown;
@@ -268,6 +268,22 @@ export class McpUefnAdapter implements UEFNAdapter {
     const request = this.tools.some((t) => t.name === name) ? { name, arguments: args } : this.metaCall(name, args);
     const result = await this.client.callTool(request, undefined, {
       timeout: this.options.mcp.timeout_ms,
+    });
+    const text = textOf(result.content);
+    const json: unknown = result.structuredContent ?? parseJson(text);
+    return { isError: result.isError === true, text, json };
+  }
+
+  /**
+   * Calls any editor tool by toolset and name, unmapped: the level snapshot
+   * reads the scene through UEFN's editor toolsets this way. Directly listed
+   * tools are called as such, toolset tools through `call_tool`.
+   */
+  async callEditorTool(toolset: string, tool: string, args: Record<string, unknown>, options: { timeoutMs?: number } = {}): Promise<ToolOutput> {
+    if (!this.client || !this.connected) throw new Error("mcp adapter is not connected");
+    if (!this.tools.some((t) => t.name === "call_tool")) throw new Error("the UEFN MCP server has no call_tool, so its editor toolsets cannot be reached");
+    const result = await this.client.callTool(this.metaCall(`${toolset}/${tool}`, args), undefined, {
+      timeout: options.timeoutMs ?? this.options.mcp.timeout_ms,
     });
     const text = textOf(result.content);
     const json: unknown = result.structuredContent ?? parseJson(text);

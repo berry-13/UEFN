@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
+import { captureLevel, isEditorToolCaller, type LevelCapture } from "./level.ts";
 import type {
   CommandResult,
   CompileResult,
@@ -175,6 +176,13 @@ export class DevToolsEngine {
         this.connecting = undefined;
       });
     return this.connecting;
+  }
+
+  /** Reads the open level through the editor toolsets; only the mcp adapter has an editor. */
+  async captureLevel(): Promise<LevelCapture> {
+    if (!isEditorToolCaller(this.adapter)) throw new Error(`reading the level needs the mcp adapter (the ${this.adapter.name} adapter has no editor)`);
+    await this.connect();
+    return captureLevel(this.adapter);
   }
 
   async capabilities(): Promise<CapabilityReport> {

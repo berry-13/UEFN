@@ -46,8 +46,9 @@ Duration: 0.83s
 | `uefn doctor` and `uefn deps` (Verse dependency graph, test impact) | working |
 | Profiler (`uefn profile`, Chrome trace export, `uefn_profile` MCP tool) | working; Verse span and sample helpers verified in a live UEFN 42.30 session |
 | GitHub: JUnit and Actions reporters, job summary, `init --github`, `ci comment` | working |
-| CLI: `status`, `doctor`, `capabilities`, `compile`, `list`, `test`, `profile`, `trace`, `deps`, `record`, `history`, `daemon`, `ui`, `mcp`, `init`, `ci` | working |
-| MCP server (21 tools, permission modes, audit log) | working |
+| CLI: `status`, `doctor`, `capabilities`, `compile`, `list`, `test`, `profile`, `trace`, `deps`, `record`, `scenario`, `level`, `history`, `daemon`, `ui`, `mcp`, `init`, `ci` | working |
+| MCP server (23 tools, permission modes, audit log) | working |
+| Level snapshots (`uefn level snapshot` / `diff`): the open level as a diffable file | working; 2,836 actors read and re-diffed live on UEFN 42.30 |
 | Simulated adapter: deterministic capture-point world with fault injection and perf samples | working |
 | Log transport and compile-diagnostics parser | tested against real UEFN 41.10 editor logs; game start/end derived from the log |
 | UEFN MCP adapter (compile, sessions, match start/stop) | POC-001 passes against a live UEFN 42.30 session ([evidence](docs/evidence/uefn-42.30-live.md)) |
