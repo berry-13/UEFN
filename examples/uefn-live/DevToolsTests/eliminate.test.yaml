@@ -1,6 +1,6 @@
-name: Scenario eliminates a grounded player
+name: Scenario eliminates a grounded player and acts on the respawn
 id: eliminate-live
-timeout: 180s
+timeout: 240s
 setup:
   - start_game
   - spawn_player: { id: player1 }
@@ -9,9 +9,20 @@ steps:
   - wait: 5s
   - eliminate: { player: player1 }
   - wait: 1s
+  - wait: 12s
+  - teleport: { player: player1, location: Ground }
+  - wait: 5s
+  - damage: { player: player1, amount: 25 }
+  - wait: 1s
 assert:
-  - player: { id: player1, alive: false }
   - event:
       type: player.eliminated
       match: { player: player1 }
       times: 1
+  # The island respawns players skydiving; teleporting mid-fall keeps the
+  # fall speed, so landing damage varies and health is not asserted exactly.
+  - player: { id: player1, alive: true }
+  - event:
+      type: player.state_changed
+      match: { player: player1 }
+      times: 2

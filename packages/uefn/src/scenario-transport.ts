@@ -2,6 +2,9 @@ import type { CommandResult, RuntimeCommand, RuntimeEvent } from "@uefn-devtools
 import type { RuntimeTransport } from "./adapter.ts";
 import type { Clock } from "./clock.ts";
 
+/** `arg` of a spawn step the device adds before moving a downed player (IMPLICIT_SPAWN in @uefn-devtools/test). */
+const IMPLICIT_SPAWN = "implicit";
+
 /** Player actions a generated scenario device performs inside the match. */
 export const SCENARIO_ACTIONS = ["spawn_player", "teleport", "leave_area", "damage_player", "eliminate_player"] as const;
 type ScenarioAction = (typeof SCENARIO_ACTIONS)[number];
@@ -123,9 +126,18 @@ export class ScenarioTransport implements RuntimeTransport {
 
   async command(command: RuntimeCommand): Promise<CommandResult> {
     if (!(SCENARIO_ACTIONS as readonly string[]).includes(command.type)) return this.inner.command(command);
-    const expected = this.cursor;
+    let expected = this.cursor;
     if (this.conflict) return { ok: false, error: this.conflict };
-    const report = await this.next(expected);
+    let report = await this.next(expected);
+    const player = "player" in command ? command.player : undefined;
+    // A spawn the device adds before moving a downed player. The host sends it
+    // only while its observed state still shows the player down; once the
+    // device's own spawn report has arrived it moves the player directly.
+    if (report && !report.failed && report.action === "spawn_player" && report.arg === IMPLICIT_SPAWN && command.type !== "spawn_player" && report.player === player) {
+      this.cursor += 1;
+      expected = this.cursor;
+      report = await this.next(expected);
+    }
     if (this.conflict) return { ok: false, error: this.conflict };
     if (!report) {
       return {
@@ -138,7 +150,6 @@ export class ScenarioTransport implements RuntimeTransport {
     if (report.action !== (command.type as ScenarioAction)) {
       return { ok: false, error: `scenario step ${expected} was '${report.action}' in game but the test sent '${command.type}'; regenerate the scenario with 'uefn scenario'` };
     }
-    const player = "player" in command ? command.player : undefined;
     if (player !== undefined && report.player !== undefined && report.player !== player) {
       return { ok: false, error: `scenario step ${expected} acted on '${report.player}' but the test expected '${player}'` };
     }

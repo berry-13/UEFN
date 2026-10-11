@@ -120,6 +120,8 @@ test("a respawn after an elimination acts on the player's current character", ()
   // never from a character cached before the elimination.
   assert.equal(g.verse.match(/Character := Player\.GetFortCharacter\[\]/g)?.length, g.plan.length);
   assert.doesNotMatch(g.verse, /fort_character = array/);
+  // The respawn step is marked, so the host can match it whether or not it sends the spawn.
+  assert.deepEqual(g.plan.filter((s) => s.action === "spawn_player").map((s) => s.arg), ["", "implicit"]);
 });
 
 test("leave uses <area>.outside when configured", () => {

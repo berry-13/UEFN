@@ -158,8 +158,10 @@ export class McpUefnAdapter implements UEFNAdapter {
     // Not described (no describe_toolset, or it timed out): nothing to check against.
     if (!described) return true;
     if (!described.exists) return false;
+    const toolset = mapping.slice(0, slash);
     const tool = mapping.slice(slash + 1);
-    if (described.names) return described.names.has(tool);
+    // UEFN 42.30 names each tool `<toolset>.<tool>` in describe_toolset.
+    if (described.names) return described.names.has(tool) || described.names.has(`${toolset}.${tool}`);
     // An answer whose shape is not recognised: accept a whole-word mention of the tool.
     const escaped = tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(^|[^A-Za-z0-9_])${escaped}([^A-Za-z0-9_]|$)`).test(described.text);

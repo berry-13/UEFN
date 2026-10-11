@@ -64,6 +64,8 @@ export class ScenarioError extends Error {}
 const LEAVE_OFFSET = 2000;
 /** Damage large enough to eliminate any default character. */
 const ELIMINATE_DAMAGE = 100000;
+/** The `arg` of a spawn step the device adds before a teleport / enter of a player that is down. */
+export const IMPLICIT_SPAWN = "implicit";
 /** Scenario events use their own sequence range (see `SeqStart` in devtools.verse). */
 const SEQ_START = 1_000_000;
 
@@ -156,13 +158,13 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
       `            return`,
     ];
   };
-  const spawn = (p: { name: string; index: number }, description: string) => {
+  const spawn = (p: { name: string; index: number }, description: string, arg = "") => {
     const step = plan.length;
     body.push(`        # ${step}: ${description}`);
     body.push(
       ...withCharacter(p.index, step, [
         `            Emitter.Emit("player.spawned", array{DevToolsString("player", ${verseString(p.name)}), DevToolsVector("position", Character.GetTransform().Translation)})`,
-        ...confirm("spawn_player", p.name, "", description, "            "),
+        ...confirm("spawn_player", p.name, arg, description, "            "),
       ]),
     );
     live.add(p.name);
@@ -170,7 +172,9 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
   // The host's teleport / enter spawn a player that is not alive in its
   // observed state (PlayerHandle.ensureSpawned), so the device plans that spawn too.
   const ensureSpawned = (p: { name: string; index: number }, before: string) => {
-    if (!live.has(p.name)) spawn(p, `${p.name} is player ${p.index + 1} (implicit spawn before ${before})`);
+    // Marked `implicit`: the host sends this spawn only if its observed state
+    // still shows the player down, which races with the device's own report.
+    if (!live.has(p.name)) spawn(p, `${p.name} is player ${p.index + 1} (implicit spawn before ${before})`, IMPLICIT_SPAWN);
   };
   const moveTo = (player: { name: string; index: number }, position: Vector3, action: ScenarioPlanStep["action"], arg: string, description: string) => {
     const step = plan.length;

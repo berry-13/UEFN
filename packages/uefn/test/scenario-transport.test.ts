@@ -80,3 +80,25 @@ test("a second scenario device fails a waiting step at once, not at the timeout"
   assert.match(result.error!, /'mine' and 'other' both run in this match/);
   assert.ok(Date.now() - started < 1000);
 });
+
+test("a device's implicit spawn is matched whether or not the host sends it", async () => {
+  const reports = (t: ScenarioTransport) => {
+    t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 2 }));
+    t.observe(ev("scenario.step", { scenario: "s", index: 0, action: "spawn_player", player: "player1", arg: "implicit" }));
+    t.observe(ev("scenario.step", { scenario: "s", index: 1, action: "teleport", player: "player1", arg: "A" }));
+  };
+  const teleport = { type: "teleport", player: "player1", location: "A" } as RuntimeCommand;
+  // The host still saw the player down and spawned first.
+  const spawned = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  reports(spawned);
+  assert.deepEqual(await spawned.command({ type: "spawn_player", player: "player1" }), { ok: true });
+  assert.deepEqual(await spawned.command(teleport), { ok: true });
+  // The device's spawn report arrived first, so the host moved the player directly.
+  const direct = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  reports(direct);
+  assert.deepEqual(await direct.command(teleport), { ok: true });
+  // Only an implicit spawn of the same player is passed over.
+  const other = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  reports(other);
+  assert.match((await other.command({ type: "teleport", player: "player2", location: "A" } as RuntimeCommand)).error!, /was 'spawn_player' in game/);
+});

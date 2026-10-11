@@ -92,8 +92,12 @@ player moved.
   joining or leaving later do not shift who a step acts on. Each step reads
   the player's current character, so after an `eliminate` the next
   `teleport` / `enter` (which adds a spawn step) acts on the respawned
-  character. The island must respawn the player first, so put a `wait`
-  before it; a step whose player has no character fails.
+  character (verified live). The island must respawn the player first, so
+  put a `wait` before it; a step whose player has no character fails. That
+  spawn step is reported with `arg: implicit`, and the host passes over it
+  when its own state already shows the player respawned. A player respawned
+  skydiving keeps its fall speed through a teleport and takes landing
+  damage, so do not assert an exact health after a respawn.
 - Because `wait_for` is not mirrored, put a `wait` before an action that
   must happen after an outcome.
 - Teams in `spawn_player` are not enforced; players join by island settings.

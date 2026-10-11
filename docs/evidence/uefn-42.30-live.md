@@ -121,3 +121,33 @@ elimination:
 [UEFN-DEVTOOLS]|1|E|1000006|player.state_changed|player=player1|health:f=0.000000|shield:f=0.000000
 [UEFN-DEVTOOLS]|1|E|1000007|player.eliminated|player=player1
 ```
+
+### Eliminate, respawn, act again (2026-10-11)
+
+`eliminate-live` was extended past the elimination: wait for the island to
+respawn the player, teleport to the ground again, then `damage 25`. It
+passed with the player alive afterwards. A diagnostic build of the device
+read the character from the captured player at each step:
+
+```
+after-eliminate     health 0    active 0  position [757, 351, 461]
+before-spawn-step   health 100  active 1  position [0, 0, 19192]
+after-teleport      health 100  active 1  position [757, 351, 484]
+before-damage       health 90   active 1  position [757, 351, 461]
+```
+
+So `Player.GetFortCharacter[]` returns the respawned, active character, and
+steps after a respawn act on it. The island respawns players skydiving
+(Z about 19,000); a teleport during that fall keeps the fall speed, so the
+landing costs some health (10 in this run, all of it in another), and the
+test does not assert an exact health value after a respawn.
+
+The same runs showed the host and device racing on the implicit spawn: the
+device's `player.spawned` can arrive before the host's teleport, so the
+host no longer sees the player down and skips its own `spawn_player`. The
+device marks that step `arg=implicit` and the host passes over it; both
+orders passed live.
+
+The same session also showed that `describe_toolset` names tools
+`<toolset>.<tool>` (`ValkyrieToolset.VerseToolset.BuildAll`), which the
+connect-time tool check now accepts.
