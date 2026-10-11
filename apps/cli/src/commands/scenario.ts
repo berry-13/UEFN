@@ -1,8 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import type { Vector3 } from "@uefn-devtools/protocol";
 import { parseDuration } from "@uefn-devtools/protocol";
-import { findYamlTest, generateScenario } from "@uefn-devtools/test";
+import { findYamlTest, generateScenario, scenarioLocations } from "@uefn-devtools/test";
 import { openEngine, print, str, UsageError, type Command } from "../shared.ts";
 
 /** The test id named in a generated scenario file's header, if the file is one. */
@@ -39,12 +38,7 @@ export const scenario: Command = {
       const found = await findYamlTest(resolve(engine.root, config.paths.tests), id);
       if (!found) throw new UsageError(`no YAML test with id '${id}' (scenarios are generated from YAML tests)`);
 
-      // Named positions: scenario.locations first, then simulator device locations.
-      const locations: Record<string, Vector3> = {};
-      for (const d of config.simulated.devices) if (d.location) locations[d.id] = d.location;
-      Object.assign(locations, config.scenario.locations);
-
-      const generated = generateScenario(found.test, { id, locations, startDelayMs: parseDuration(config.scenario.start_delay) });
+      const generated = generateScenario(found.test, { id, locations: scenarioLocations(config), startDelayMs: parseDuration(config.scenario.start_delay) });
       const dir = resolve(engine.root, str(values, "out") ?? config.scenario.output);
       await mkdir(dir, { recursive: true });
       const path = join(dir, generated.fileName);

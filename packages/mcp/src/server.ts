@@ -136,19 +136,13 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
     ),
   );
 
-  /** Event index at which the session started through this server; default profile window. */
-  let sessionMark: { id: string; index: number } | undefined;
-
   // ── runtime ─────────────────────────────────────────────────────────────
   server.registerTool(
     "uefn_start_session",
     { description: "Launch (or reuse) a UEFN session and wait until the DevTools runtime reports ready." },
     guarded("uefn_start_session", "start_sessions", () =>
       lock.run(async () => {
-        const before = engine.events.size;
-        const previousId = sessionMark?.id;
         const session = await engine.startSession();
-        if (session.id !== previousId) sessionMark = { id: session.id, index: before };
         await engine.waitForRuntime();
         return ok(session);
       }),
@@ -273,7 +267,7 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
       inputSchema: { from_index: z.number().int().nonnegative().optional() },
     },
     guarded("uefn_profile", "read_project", async ({ from_index }: { from_index?: number }) =>
-      ok(buildProfile(engine.events.all(from_index ?? sessionMark?.index ?? 0))),
+      ok(buildProfile(engine.events.all(from_index ?? engine.sessionEventIndex))),
     ),
   );
 

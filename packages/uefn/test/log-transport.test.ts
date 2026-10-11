@@ -188,3 +188,17 @@ test("after the engine forgets its state, a match UEFN reports running is announ
     ["game.started", true],
   ]);
 });
+
+test("a backfill ignores hellos from an earlier play session", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-log-"));
+  const path = join(dir, "UnrealEditorFortnite.log");
+  const wire = (body: string) => `[2026.10.11-10.26.06:754][491]LogVerse: DevTools-devtools_log: [UEFN-DEVTOOLS]|1|${body}`;
+  // Seen live on 42.30: every play session launch logs this activity first.
+  const launch = "[2026.10.11-10.25.57:426][465]LogValkyrieActivityTracker: Session -> Start Activity: Matchmaking - Attempting matchmaking";
+  await writeFile(path, [wire("H|0|0.1.0"), REAL.inProgress, REAL.postGameEnd, launch, REAL.inProgress, ""].join("\n"));
+  const transport = new LogFileTransport({ path, clock: fixedClock(), pollMs: 10, backfillBytes: 1024 * 1024 });
+  await transport.start();
+  const events = await drain(transport);
+  // The current session's match is running, but its runtime never said hello.
+  assert.deepEqual(events.map((e) => e.type), ["game.started"]);
+});

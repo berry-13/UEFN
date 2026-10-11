@@ -41,7 +41,8 @@ test("player actions become ordered, confirmed device steps", () => {
   assert.match(g.verse, /TeleportTo\[vector3\{X := 3200\.0, Y := 400\.0, Z := 0\.0\}/, "leave moves away from the area");
   assert.match(g.verse, /devtools_emitter\{SeqStart := 1000000\}/);
   assert.match(g.verse, /if \(Character\.GetHealth\(\) <= 0\.0\):\n\s+Emitter\.Emit\("player\.eliminated"/, "eliminate reports an observed elimination");
-  assert.equal(g.verse.match(/player\.eliminated/g)?.length, 1, "only the eliminate step reports eliminations");
+  // Every damaging step (damage or eliminate) reports an elimination it observes.
+  assert.equal(g.verse.match(/player\.eliminated/g)?.length, g.plan.filter((s) => s.action === "damage_player" || s.action === "eliminate_player").length);
   assert.equal(g.warnings.length, 2, g.warnings.join("\n"));
 });
 
@@ -181,4 +182,22 @@ test("findYamlTest reports invalid YAML instead of skipping it", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("any step that leaves health at 0 reports the elimination; a surviving eliminate fails", () => {
+  const g = generateScenario(
+    parse({ name: "Lethal", setup: ["start_game", { spawn_player: { id: 1 } }], steps: [{ damage: { player: 1, amount: 500 } }, { eliminate: { player: 1 } }] }),
+    { id: "lethal", locations, startDelayMs: 0 },
+  );
+  const damage = g.verse.slice(g.verse.indexOf("# 1: damage"), g.verse.indexOf("# 2: eliminate"));
+  assert.match(damage, /if \(Character\.GetHealth\(\) <= 0\.0\):\n\s+Emitter\.Emit\("player\.eliminated"/);
+  assert.doesNotMatch(damage, /survived/);
+  const eliminate = g.verse.slice(g.verse.indexOf("# 2: eliminate"));
+  assert.match(eliminate, /else:\n\s+Fail\(2, "player 1 survived the elimination/);
+});
+
+test("moving a location changes the fingerprint", () => {
+  const doc = { name: "T", setup: ["start_game"], steps: [{ teleport: { player: 1, location: "A" } }] };
+  const at = (a: [number, number, number]) => generateScenario(parse(doc), { id: "t", locations: { ...locations, A: a }, startDelayMs: 0 }).fingerprint;
+  assert.notEqual(at([0, 0, 0]), at([100, 0, 0]));
 });

@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { consoleReporter } from "../reporter.ts";
 import type { RunnerEvent } from "../runner.ts";
 import { githubReporter } from "./github.ts";
@@ -41,6 +41,8 @@ export interface ReporterSetOptions {
   output?: string;
   /** Project root, for resolving relative output paths and annotation files. */
   root?: string;
+  /** The configured results directory; the default JUnit file goes there. */
+  resultsDir?: string;
   verbose?: boolean;
   env?: NodeJS.ProcessEnv;
   write?: (text: string) => void;
@@ -81,7 +83,7 @@ export function createReporters(options: ReporterSetOptions = {}): ReporterHandl
       case "junit":
         handlers.push(
           junitReporter({
-            file: options.output ?? DEFAULT_JUNIT_PATH,
+            file: options.output ?? (options.resultsDir ? join(options.resultsDir, "junit.xml") : DEFAULT_JUNIT_PATH),
             cwd: root,
             onWrite: (file) => write(`JUnit: ${file}\n`),
           }),

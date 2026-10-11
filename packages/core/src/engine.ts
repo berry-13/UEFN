@@ -195,6 +195,16 @@ export class DevToolsEngine {
     return this.lastCompile;
   }
 
+  /** Tells a scenario transport which device the running test expects (see ScenarioTransport). */
+  expectScenario(expected: { id: string; plan: string } | undefined): void {
+    if (this.currentSession) this.adapter.transport().expectScenario?.(expected);
+  }
+
+  /** Event log index where the current session started (0 before any session). */
+  get sessionEventIndex(): number {
+    return this.sessionStartIndex;
+  }
+
   /** Launches a session, or reuses the one already running. */
   async startSession(options: StartSessionOptions = {}): Promise<Session> {
     await this.connect();

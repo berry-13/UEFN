@@ -24,6 +24,8 @@ export interface RuntimeTransport {
   supportedCommands(): readonly RuntimeCommand["type"][];
   /** The engine forgot its derived state; drop what the transport deduplicates against it. */
   resetObservedState?(): void;
+  /** The scenario device (test id, plan fingerprint) the running test expects; scenario transports only. */
+  expectScenario?(expected: { id: string; plan: string } | undefined): void;
 }
 
 export type CapabilityStatus = "DIRECT" | "INSTRUMENTED" | "DERIVED" | "BLOCKED" | "UNKNOWN";

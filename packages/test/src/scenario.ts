@@ -71,12 +71,22 @@ const SEQ_START = 1_000_000;
 
 /**
  * Hash of what the device does, so a stale device build is detected. `timing`
- * covers the waits between steps and the start delay, which change the
- * device's behaviour without changing any step.
+ * covers the waits between steps, the start delay and the resolved teleport
+ * positions, which change the device's behaviour without changing any step.
  */
 export function scenarioFingerprint(plan: readonly ScenarioPlanStep[], timing: readonly string[] = []): string {
   const text = [...plan.map((s) => [s.index, s.action, s.player, s.arg].join("\u0000")), ...timing].join("\n");
   return createHash("sha256").update(text).digest("hex").slice(0, 12);
+}
+
+/** Named positions for teleport / enter / leave: scenario.locations, falling back to simulator device locations. */
+export function scenarioLocations(config: {
+  simulated: { devices: readonly { id: string; location?: Vector3 | undefined }[] };
+  scenario: { locations: Record<string, Vector3> };
+}): Record<string, Vector3> {
+  const locations: Record<string, Vector3> = {};
+  for (const d of config.simulated.devices) if (d.location) locations[d.id] = d.location;
+  return Object.assign(locations, config.scenario.locations);
 }
 
 export function scenarioClassName(id: string): string {
@@ -105,7 +115,7 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
   /** Players the host considers alive: a teleport / enter of anyone else spawns them first. */
   const live = new Set<string>();
   const plan: ScenarioPlanStep[] = [];
-  /** Waits (with the step they precede) and the start delay, for the fingerprint. */
+  /** Waits (with the step they precede), the start delay and resolved positions, for the fingerprint. */
   const timing: string[] = [`start_delay ${options.startDelayMs}`];
   const warnings: string[] = [];
   const body: string[] = [];
@@ -178,6 +188,8 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
   };
   const moveTo = (player: { name: string; index: number }, position: Vector3, action: ScenarioPlanStep["action"], arg: string, description: string) => {
     const step = plan.length;
+    // A location can move without being renamed; the arg only names it.
+    timing.push(`position ${position.join(",")} at ${step}`);
     body.push(`        # ${step}: ${description}`);
     body.push(
       ...withCharacter(player.index, step, [
@@ -197,11 +209,16 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
       ...withCharacter(player.index, step, [
         `            Character.Damage(${verseFloat(amount)})`,
         `            ReportHealth(${verseString(player.name)}, Character)`,
-        // Only what the device observes: an elimination is reported when health reads 0.
+        // Only what the device observes: an elimination is reported when health
+        // reads 0, whichever step caused it.
+        `            if (Character.GetHealth() <= 0.0):`,
+        `                Emitter.Emit("player.eliminated", array{DevToolsString("player", ${verseString(player.name)})})`,
         ...(action === "eliminate_player"
           ? [
-              `            if (Character.GetHealth() <= 0.0):`,
-              `                Emitter.Emit("player.eliminated", array{DevToolsString("player", ${verseString(player.name)})})`,
+              // Damage has no effect on an invulnerable (e.g. sky-spawning) player.
+              `            else:`,
+              `                Fail(${step}, "player ${player.index + 1} survived the elimination (health above 0; invulnerable or still sky-spawning?)")`,
+              `                return`,
             ]
           : []),
         ...confirm(action, player.name, arg, description, "            "),

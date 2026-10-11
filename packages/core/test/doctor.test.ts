@@ -192,3 +192,14 @@ test("results path that is a file, and a log path that is a directory, fail", as
   assert.equal(status(report, "runtime.log")?.status, "fail");
   assert.match(status(report, "runtime.log")!.detail, /must be a file/);
 });
+
+test("a results path below a regular file fails", async () => {
+  const dir = await project({
+    "uefn-devtools.config.yaml": `${CONFIG}paths:\n  results: out/results\n`,
+    "Verse/a.verse": "a := class(creative_device){}\n",
+    out: "x",
+  });
+  const report = await runDoctor(undefined, { cwd: dir });
+  assert.equal(status(report, "results.writable")?.status, "fail");
+  assert.match(status(report, "results.writable")!.detail, /out exists but is not a directory/);
+});

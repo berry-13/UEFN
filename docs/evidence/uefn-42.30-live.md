@@ -151,3 +151,22 @@ orders passed live.
 The same session also showed that `describe_toolset` names tools
 `<toolset>.<tool>` (`ValkyrieToolset.VerseToolset.BuildAll`), which the
 connect-time tool check now accepts.
+
+### Reused sessions, launch timing and lethal damage (2026-10-11)
+
+- **Reused session.** With a play session started beforehand (match
+  `Running`), `uefn test eliminate-live` attached to it, restarted the match
+  (StopGame, then StartGame) and the scenario device ran again: PASS.
+- **Launch timing.** With a Fortnite client already running, the match
+  started and the runtime logged its hello about 15 s after StartSession was
+  dispatched, before the call returned. The log was then tailed from the
+  end, so the hello was missed and the run timed out waiting for
+  `session.ready`. The log is now read from its size before the launch;
+  the same run then passed.
+- **Session boundary.** Each play session launch logs
+  `LogValkyrieActivityTracker: Session -> Start Activity: Matchmaking`. A
+  backfill on a reused session no longer looks past it, so a hello from an
+  earlier session is not replayed.
+- **Lethal damage.** After a respawn, the landing alone can eliminate the
+  player; the following `damage` step then reads health 0 and now reports
+  `player.eliminated`. The live test asserts only outcomes that always hold.

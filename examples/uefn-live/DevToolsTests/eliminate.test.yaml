@@ -15,13 +15,13 @@ steps:
   - damage: { player: player1, amount: 25 }
   - wait: 1s
 assert:
+  # The island respawns players skydiving; a teleport mid-fall keeps the fall
+  # speed, so the landing can hurt or even eliminate the respawned player.
+  # Every step is confirmed by the device; only outcomes that always hold are
+  # asserted here.
   - event:
       type: player.eliminated
       match: { player: player1 }
-      times: 1
-  # The island respawns players skydiving; teleporting mid-fall keeps the
-  # fall speed, so landing damage varies and health is not asserted exactly.
-  - player: { id: player1, alive: true }
   - event:
       type: player.state_changed
       match: { player: player1 }

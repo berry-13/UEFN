@@ -102,3 +102,48 @@ test("a device's implicit spawn is matched whether or not the host sends it", as
   reports(other);
   assert.match((await other.command({ type: "teleport", player: "player2", location: "A" } as RuntimeCommand)).error!, /was 'spawn_player' in game/);
 });
+
+test("a match end drops its reports and fails a waiting step", async () => {
+  const t = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 60_000 });
+  t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 2 }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 0, action: "spawn_player", player: "player1", arg: "" }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 1, action: "damage_player", player: "player1", arg: "5" }));
+  assert.deepEqual(await t.command({ type: "spawn_player", player: "player1" }), { ok: true });
+  // The attempt ends with step 1 unconsumed; a retry in the next match must not see it.
+  t.observe(ev("game.ended", {}));
+  const started = Date.now();
+  const pending = t.command({ type: "spawn_player", player: "player1" });
+  t.observe(ev("game.ended", {}));
+  assert.match((await pending).error!, /step 0 \(spawn_player\) was not reported: the match ended/);
+  assert.ok(Date.now() - started < 1000);
+  t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 2 }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 0, action: "spawn_player", player: "player1", arg: "" }));
+  assert.deepEqual(await t.command({ type: "spawn_player", player: "player1" }), { ok: true });
+});
+
+test("a single placed device must be the one the running test generates", async () => {
+  const stale = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  stale.expectScenario({ id: "s", plan: "new" });
+  stale.observe(ev("scenario.started", { scenario: "s", plan: "old", steps: 1 }));
+  stale.observe(ev("scenario.step", { scenario: "s", index: 0, action: "spawn_player", player: "player1", arg: "" }));
+  assert.match((await stale.command({ type: "spawn_player", player: "player1" })).error!, /stale \(plan old, the test generates new\)/);
+  const foreign = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  foreign.expectScenario({ id: "s", plan: "new" });
+  foreign.observe(ev("scenario.started", { scenario: "other", plan: "new", steps: 1 }));
+  assert.match((await foreign.command({ type: "spawn_player", player: "player1" })).error!, /is for 'other', not 's'/);
+  const current = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  current.expectScenario({ id: "s", plan: "new" });
+  current.observe(ev("scenario.started", { scenario: "s", plan: "new", steps: 1 }));
+  current.observe(ev("scenario.step", { scenario: "s", index: 0, action: "spawn_player", player: "player1", arg: "" }));
+  assert.deepEqual(await current.command({ type: "spawn_player", player: "player1" }), { ok: true });
+});
+
+test("a host spawn after a lethal damage step is covered by the device's next move", async () => {
+  const t = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 2 }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 0, action: "damage_player", player: "player1", arg: "500" }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 1, action: "teleport", player: "player1", arg: "A" }));
+  assert.deepEqual(await t.command({ type: "damage_player", player: "player1", amount: 500 }), { ok: true });
+  assert.deepEqual(await t.command({ type: "spawn_player", player: "player1" }), { ok: true });
+  assert.deepEqual(await t.command({ type: "teleport", player: "player1", location: "A" } as RuntimeCommand), { ok: true });
+});

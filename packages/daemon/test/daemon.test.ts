@@ -461,3 +461,30 @@ test("concurrent recovery of one stale lock lets exactly one process win", async
   assert.equal(held.pid, process.pid);
   await (won[0] as PromiseFulfilledResult<{ release: () => Promise<void> }>).value.release();
 });
+
+test("a live daemon that misses a probe keeps its lock", async () => {
+  const { acquireDaemonLock } = await import("@uefn-devtools/daemon");
+  const { createServer } = await import("node:http");
+  const { utimes } = await import("node:fs/promises");
+  const dir = await mkdtemp(join(tmpdir(), "uefn-devtools-lock-"));
+  await mkdir(join(dir, ".devtools"), { recursive: true });
+  // A daemon (this process) whose event loop is blocked for its first answers.
+  const startedAt = Date.now();
+  const server = createServer((_req, res) => {
+    const answer = () => res.end(JSON.stringify({ daemon: { pid: process.pid } }));
+    if (Date.now() - startedAt < 3000) setTimeout(answer, 2000);
+    else answer();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as { port: number }).port;
+  await writeFile(daemonInfoPath(dir), JSON.stringify({ pid: process.pid, port, token: "x", root: dir, startedAt: 0, version: "0" }));
+  await writeFile(daemonLockPath(dir), JSON.stringify({ pid: process.pid, nonce: "live" }) + "\n");
+  const old = new Date(Date.now() - 60_000);
+  await utimes(daemonLockPath(dir), old, old);
+  try {
+    await assert.rejects(acquireDaemonLock(dir));
+    assert.equal(JSON.parse(await readFile(daemonLockPath(dir), "utf8")).nonce, "live");
+  } finally {
+    server.close();
+  }
+});

@@ -301,3 +301,98 @@ test("only a StartSession timeout is reported as a stalled launch", async () => 
     await broken.disconnect().catch(() => {});
   }
 });
+
+test("scenario mode restarts a reused session's running match so its device runs again", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-mcp-restart-"));
+  const calls = join(dir, "calls.txt");
+  const script = join(dir, "restart.mjs");
+  const mcp = import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js");
+  const stdio = import.meta.resolve("@modelcontextprotocol/sdk/server/stdio.js");
+  // A connected session whose match runs; StopGame ends it, StartGame starts one.
+  await writeFile(
+    script,
+    `import { McpServer } from ${JSON.stringify(mcp)};
+import { StdioServerTransport } from ${JSON.stringify(stdio)};
+import { appendFileSync } from "node:fs";
+const server = new McpServer({ name: "fake-uefn-restart", version: "0" });
+let state = "Running";
+const tools = {
+  GetSessionStatus: () => "Connected",
+  GetGameState: () => state,
+  StopGame: () => { state = "CanStart"; return null; },
+  StartGame: () => { const ok = state === "CanStart"; state = "Running"; return ok ? null : "refused"; },
+};
+for (const [name, fn] of Object.entries(tools)) {
+  server.registerTool(name, { description: name }, async () => {
+    appendFileSync(${JSON.stringify(calls)}, name + "\\n");
+    const value = fn();
+    return { content: [{ type: "text", text: JSON.stringify({ returnValue: value }) }], isError: value === "refused" };
+  });
+}
+await server.connect(new StdioServerTransport());
+`,
+  );
+  await writeFile(calls, "");
+  const log = join(dir, "UnrealEditorFortnite.log");
+  await writeFile(log, "[2026.10.09-10.00.01:000][  2]LogValkyrieBeacon: [3974] (ValkyrieBeaconClient_3) MinigameStateChanged: EFortMinigameState::InProgress\n");
+  const adapter = new McpUefnAdapter({
+    mcp: McpAdapterConfig.parse({
+      command: process.execPath,
+      args: [script],
+      tools: { start_session: "StartSession", session_state: "GetSessionStatus", start_game: "StartGame", end_game: "StopGame", game_state: "GetGameState" },
+      timeout_ms: 20_000,
+    }),
+    logPath: log,
+    sessionPollMs: 10,
+    scenario: { stepTimeoutMs: 1000 },
+  });
+  try {
+    await adapter.connect();
+    assert.equal((await adapter.startSession()).reused, true);
+    // Not a no-op: the match was restarted, so the caller waits for its start.
+    assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true });
+    // Only the first start restarts; later attempts start normally.
+    assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true, noop: true });
+    const sent = (await readFile(calls, "utf8")).trim().split("\n").filter((c) => c === "StopGame" || c === "StartGame");
+    assert.deepEqual(sent, ["StopGame", "StartGame"]);
+  } finally {
+    await adapter.disconnect();
+  }
+});
+
+test("a hello logged while StartSession is still running is not missed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-mcp-launch-"));
+  const script = join(dir, "launch.mjs");
+  const log = join(dir, "UnrealEditorFortnite.log");
+  await writeFile(log, "[2026.10.11-10.00.00:000][  1]LogTemp: before the launch\n");
+  const mcp = import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js");
+  const stdio = import.meta.resolve("@modelcontextprotocol/sdk/server/stdio.js");
+  // Seen live: with the client already up, the match starts (and the runtime
+  // says hello) before StartSession returns.
+  await writeFile(
+    script,
+    `import { McpServer } from ${JSON.stringify(mcp)};
+import { StdioServerTransport } from ${JSON.stringify(stdio)};
+import { appendFileSync } from "node:fs";
+const server = new McpServer({ name: "fake-uefn-launch", version: "0" });
+let status = "Disconnected";
+server.registerTool("GetSessionStatus", { description: "s" }, async () => ({ content: [{ type: "text", text: JSON.stringify({ returnValue: status }) }] }));
+server.registerTool("StartSession", { description: "s" }, async () => {
+  appendFileSync(${JSON.stringify(log)}, "[2026.10.11-11.00.26:222][702]LogVerse: DevTools-devtools_log: [UEFN-DEVTOOLS]|1|H|0|0.1.0\\n");
+  status = "Connected";
+  return { content: [{ type: "text", text: '{"returnValue":"Completed"}' }] };
+});
+await server.connect(new StdioServerTransport());
+`,
+  );
+  const adapter = sessionAdapter(script, log);
+  try {
+    await adapter.connect();
+    assert.equal((await adapter.startSession()).reused, false);
+    await adapter.transport().start();
+    const events = adapter.transport().receive()[Symbol.asyncIterator]();
+    assert.equal(((await events.next()).value as RuntimeEvent).type, "session.ready");
+  } finally {
+    await adapter.disconnect();
+  }
+});

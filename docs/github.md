@@ -17,7 +17,7 @@ is added automatically. `--json` keeps working as before.
 |---|---|
 | `console` | Human-readable output (unchanged) |
 | `json` | The run summary, on stdout (or in `--output` when `junit` is not selected) |
-| `junit` | JUnit XML in `--output` (default `.devtools/results/junit.xml`) |
+| `junit` | JUnit XML in `--output` (default `junit.xml` in `paths.results`) |
 | `github` | Workflow commands on stdout, plus Markdown appended to `$GITHUB_STEP_SUMMARY` |
 
 ### github

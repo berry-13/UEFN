@@ -84,6 +84,11 @@ export async function removeDaemonInfo(root: string, pid: number): Promise<void>
 
 /** How long a lock counts as a start in progress before an answering daemon must stand behind it. */
 const LOCK_GRACE_MS = 30_000;
+/**
+ * A live daemon that stops answering (its event loop blocked, e.g. on a
+ * SQLite busy wait) keeps its lock until it has missed probes this long.
+ */
+const UNRESPONSIVE_MS = 10_000;
 
 interface LockContents {
   pid: number;
@@ -166,7 +171,16 @@ async function lockIsStale(root: string, path: string, holder: LockContents | un
   if (holder && !isProcessAlive(holder.pid)) return true;
   if (holder) {
     const info = await readDaemonInfo(root);
-    if (info && info.pid === holder.pid && (await probeDaemon(info))) return false;
+    if (info && info.pid === holder.pid) {
+      // The holder is alive and published its endpoint: it is that daemon, not
+      // a reused pid. One missed probe is not enough evidence to steal its lock.
+      const until = Date.now() + UNRESPONSIVE_MS;
+      do {
+        if (await probeDaemon(info)) return false;
+        await new Promise((r) => setTimeout(r, 1000));
+      } while (Date.now() < until);
+      return true;
+    }
   }
   // No answering daemon behind it (or a half-written lock): a start still in
   // progress while young, a crashed start or a reused pid once old.

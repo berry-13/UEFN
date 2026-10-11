@@ -9,6 +9,7 @@ import { DEBUG_ABORT_MESSAGE, type DebugHooks } from "./debug.ts";
 import { filterTests, findTestFiles, loadTests } from "./discover.ts";
 import { AssertionError } from "./expect.ts";
 import { createFixtures } from "./fixtures.ts";
+import { generateScenario, scenarioLocations } from "./scenario.ts";
 import { slugify } from "./names.ts";
 
 export type RunnerEvent =
@@ -212,6 +213,23 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
   return summary;
 }
 
+/** The scenario device a YAML test generates, so the placed one can be checked against it. */
+function expectedScenario(engine: DevToolsEngine, def: TestDefinition): { id: string; plan: string } | undefined {
+  if (!def.yaml) return undefined;
+  try {
+    const { config } = engine;
+    const generated = generateScenario(def.yaml, {
+      id: def.id,
+      locations: scenarioLocations(config),
+      startDelayMs: parseDuration(config.scenario.start_delay),
+    });
+    return { id: def.id, plan: generated.fingerprint };
+  } catch {
+    // Not a scenario test (no player actions, or one the device cannot run).
+    return undefined;
+  }
+}
+
 async function runAttempt(
   engine: DevToolsEngine,
   def: TestDefinition,
@@ -234,6 +252,7 @@ async function runAttempt(
   if (engine.supportsCommand("reset")) await engine.command({ type: "reset" });
   if (engine.supportsCommand("seed")) await engine.command({ type: "seed", seed });
   engine.resetObservedState();
+  if (engine.config.scenario.enabled) engine.expectScenario(expectedScenario(engine, def));
   const ctx = new TestContext(
     engine,
     engine.events.mark(),

@@ -55,8 +55,8 @@ start; it is not a synchronisation point with the host.
 | `spawn_player: { id }` | binds the id to the next player in `GetPlayers()` order | `player.spawned` (with position), `scenario.step` |
 | `teleport` / `enter` | `TeleportTo` the named location; first a spawn step if the player has not spawned yet or was eliminated, as the host does | `player.moved` (actual position), `scenario.step` |
 | `leave` | `TeleportTo` `<area>.outside` if configured, else 2000 units along +X from the area's position (not checked to be outside the area) | `player.moved`, `scenario.step` |
-| `damage: { amount }` | `Damage(amount)` | `player.state_changed` (health, shield), `scenario.step` |
-| `eliminate` | `Damage` large enough to eliminate | `player.state_changed`, `player.eliminated` when health reads 0, `scenario.step` |
+| `damage: { amount }` | `Damage(amount)` | `player.state_changed` (health, shield), `player.eliminated` when health reads 0, `scenario.step` |
+| `eliminate` | `Damage` large enough to eliminate; the step fails if health stays above 0 (an invulnerable or sky-spawning player) | `player.state_changed`, `player.eliminated`, `scenario.step` |
 | `wait` | `Sleep` | none |
 | `start_game` / `end_game` | nothing (the host does it over MCP) | |
 | `wait_for` | not mirrored: the device cannot see DevTools events | |
@@ -80,14 +80,21 @@ player moved.
   in order and fails on a mismatch (`was 'damage_player' in game but the
   test sent 'teleport'`), a device-side failure, or a timeout.
 - Every scenario event carries the test id (`scenario`); `scenario.started`
-  also carries a fingerprint of the plan, its waits and the start delay
-  (`plan`), and each `scenario.step`
+  also carries a fingerprint of the plan, its waits, the start delay and the
+  resolved teleport positions (`plan`), and each `scenario.step`
   the argument it was generated from (`arg`: location, area, damage amount,
   eliminator). The host locks onto the first scenario that starts in a match
   and ignores the others' reports, but fails the next step if a second
   scenario, or a second build of the same one, starts in that match. A step
   whose argument differs from what the test sends fails as a stale device:
-  regenerate and recompile. `game.ended` releases the lock.
+  regenerate and recompile. With `scenario.enabled`, the runner also tells
+  the host which device each YAML test generates, so a single placed device
+  that is stale or belongs to another test is refused at its first step.
+  `game.ended` releases the lock and drops the match's unconsumed reports; a
+  step still waiting fails then.
+- When `uefn test` attaches to a session whose match is already running,
+  the device ran before the host attached, so the first `start_game`
+  restarts the match (StopGame, then StartGame) to run the device again.
 - A player is captured at the player's first step and reused, so players
   joining or leaving later do not shift who a step acts on. Each step reads
   the player's current character, so after an `eliminate` the next

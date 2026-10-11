@@ -270,17 +270,18 @@ export async function runDoctor(source?: DevToolsEngine | LoadedConfig, options:
   );
 
   const resultsDir = resolve(root, config.paths.results);
+  // The nearest existing ancestor is where mkdir starts; it must be a directory.
   let probe = resultsDir;
-  while (!(await isDir(probe)) && dirname(probe) !== probe) probe = dirname(probe);
+  while (!(await stat(probe).then(() => true, () => false)) && dirname(probe) !== probe) probe = dirname(probe);
   const writable = await access(probe, constants.W_OK).then(() => true, () => false);
-  const blockedByFile = !(await isDir(resultsDir)) && (await stat(resultsDir).then(() => true, () => false));
+  const blockedByFile = !(await isDir(probe));
   add(
     blockedByFile
       ? {
           id: "results.writable",
           title: "Results directory writable",
           status: "fail",
-          detail: `${resultsDir} exists but is not a directory`,
+          detail: `${probe} exists but is not a directory, so ${relative(root, resultsDir)} cannot be created`,
           fix: "remove the file or change paths.results in the config",
         }
       : writable

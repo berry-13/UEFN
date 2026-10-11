@@ -61,6 +61,10 @@ export class ScenarioTransport implements RuntimeTransport {
   /** The scenario (id and plan fingerprint) this match is locked onto. */
   private locked: { id: string; plan?: string } | undefined;
   private conflict: string | undefined;
+  /** The scenario the running test was generated into, when the host knows it. */
+  private expected: { id: string; plan: string } | undefined;
+  /** Why pending steps were abandoned (the match ended under them). */
+  private abandoned: string | undefined;
   private waiters = new Set<() => void>();
 
   constructor(
@@ -89,15 +93,28 @@ export class ScenarioTransport implements RuntimeTransport {
   observe(event: RuntimeEvent): void {
     const p = event.payload;
     if (event.type === "game.ended") {
+      // Reports belong to the match that produced them: a retry in the next
+      // match must not consume them, and a step still waiting fails now.
       this.locked = undefined;
       this.conflict = undefined;
+      this.reports = [];
+      this.cursor = 0;
+      this.abandoned = "the match ended before the step was reported";
+      for (const wake of this.waiters) wake();
+      this.abandoned = undefined;
       return;
     }
     if (!event.type.startsWith("scenario.")) return;
     const id = typeof p["scenario"] === "string" ? p["scenario"] : "";
     if (event.type === "scenario.started") {
       const plan = typeof p["plan"] === "string" ? p["plan"] : undefined;
-      if (this.locked && this.locked.id !== id) {
+      if (!this.locked && this.expected && (this.expected.id !== id || this.expected.plan !== plan)) {
+        this.conflict =
+          this.expected.id !== id
+            ? `the scenario device in this match is for '${id || "(untagged)"}', not '${this.expected.id}'; place the device generated for this test ('uefn scenario ${this.expected.id}')`
+            : `the placed scenario device for '${id}' is stale (plan ${plan ?? "?"}, the test generates ${this.expected.plan}); regenerate it with 'uefn scenario ${id}' and compile`;
+        this.locked = { id, ...(plan !== undefined ? { plan } : {}) };
+      } else if (this.locked && this.locked.id !== id) {
         this.conflict = `scenario devices for '${this.locked.id || "(untagged)"}' and '${id || "(untagged)"}' both run in this match; place one scenario device per test`;
       } else if (this.locked && this.locked.plan !== plan) {
         this.conflict = `two builds of scenario '${id}' (plans ${this.locked.plan ?? "?"} and ${plan ?? "?"}) run in this match; remove the stale device and regenerate it with 'uefn scenario'`;
@@ -124,21 +141,38 @@ export class ScenarioTransport implements RuntimeTransport {
     for (const wake of this.waiters) wake();
   }
 
+  /**
+   * The scenario (test id and plan fingerprint) the running test generates,
+   * so a single stale or foreign device is refused, not only a second one.
+   * `undefined` when the host cannot tell (a TypeScript test).
+   */
+  expectScenario(expected: { id: string; plan: string } | undefined): void {
+    this.expected = expected;
+  }
+
   async command(command: RuntimeCommand): Promise<CommandResult> {
     if (!(SCENARIO_ACTIONS as readonly string[]).includes(command.type)) return this.inner.command(command);
     let expected = this.cursor;
     if (this.conflict) return { ok: false, error: this.conflict };
     let report = await this.next(expected);
     const player = "player" in command ? command.player : undefined;
+    const isReport = (r: typeof report): r is Report => typeof r === "object" && !r.failed;
     // A spawn the device adds before moving a downed player. The host sends it
     // only while its observed state still shows the player down; once the
     // device's own spawn report has arrived it moves the player directly.
-    if (report && !report.failed && report.action === "spawn_player" && report.arg === IMPLICIT_SPAWN && command.type !== "spawn_player" && report.player === player) {
+    if (isReport(report) && report.action === "spawn_player" && report.arg === IMPLICIT_SPAWN && command.type !== "spawn_player" && report.player === player) {
       this.cursor += 1;
       expected = this.cursor;
       report = await this.next(expected);
     }
+    // The reverse: the host saw the player go down (a lethal damage step) and
+    // spawns them before moving them, but the device planned no spawn there.
+    // It moves the current, respawned character, so the move covers the spawn.
+    if (command.type === "spawn_player" && isReport(report) && report.action === "teleport" && report.player === player) {
+      return { ok: true };
+    }
     if (this.conflict) return { ok: false, error: this.conflict };
+    if (typeof report === "string") return { ok: false, error: `scenario step ${expected} (${command.type}) was not reported: ${report}` };
     if (!report) {
       return {
         ok: false,
@@ -171,13 +205,14 @@ export class ScenarioTransport implements RuntimeTransport {
     this.inner.resetObservedState?.();
   }
 
-  private next(index: number): Promise<Report | undefined> {
+  /** The report for step `index`; a string when the step was abandoned; undefined on timeout. */
+  private next(index: number): Promise<Report | string | undefined> {
     const find = () => this.reports.find((r) => r.index === index);
     const found = find();
     if (found) return Promise.resolve(found);
     return new Promise((resolve) => {
       let done = false;
-      const finish = (value: Report | undefined) => {
+      const finish = (value: Report | string | undefined) => {
         if (done) return;
         done = true;
         this.waiters.delete(check);
@@ -187,6 +222,7 @@ export class ScenarioTransport implements RuntimeTransport {
       const check = () => {
         const r = find();
         if (r) finish(r);
+        else if (this.abandoned) finish(this.abandoned);
         // A second scenario device fails the step now, not at the timeout.
         else if (this.conflict) finish(undefined);
       };

@@ -263,3 +263,9 @@ test("one failing reporter does not stop the others", async () => {
   assert.ok(out.some((l) => l.startsWith("::error ")), "github reporter still ran");
   assert.equal(handler?.failures.length, 1);
 });
+
+test("junit defaults into the configured results directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "uefn-reporters-"));
+  createReporters({ reporters: ["junit"], env: {}, write: () => {}, root, resultsDir: join(root, "out", "results") })({ kind: "done", summary: SUMMARY });
+  assert.equal(await readFile(join(root, "out", "results", "junit.xml"), "utf8"), renderJunit(SUMMARY));
+});

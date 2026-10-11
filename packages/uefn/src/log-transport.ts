@@ -33,6 +33,11 @@ const UE_TIMESTAMP = /^(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3
  */
 const MINIGAME_CATEGORY = "LogValkyrieBeacon";
 const MINIGAME_STATE = /MinigameStateChanged: EFortMinigameState::(\w+)\s*$/;
+/**
+ * Logged when UEFN launches a play session (42.30). The editor log spans
+ * every session of the editor process, so a backfill never looks past it.
+ */
+const SESSION_LAUNCH = /LogValkyrieActivityTracker: Session -> Start Activity: Matchmaking\b/;
 
 export interface LogTransportOptions {
   path: string;
@@ -46,6 +51,11 @@ export interface LogTransportOptions {
    * hello and match state, which were logged before the tail started.
    */
   backfillBytes?: number;
+  /**
+   * Log size before the session was launched: lines from there on are read,
+   * since the runtime can say hello before the launch call returns.
+   */
+  fromOffset?: number;
 }
 
 /**
@@ -78,7 +88,10 @@ export class LogFileTransport implements RuntimeTransport {
 
   async start(): Promise<void> {
     // Only lines written after the session starts are relevant.
-    this.offset = await stat(this.options.path).then((s) => s.size, () => 0);
+    const size = await stat(this.options.path).then((s) => s.size, () => 0);
+    const from = this.options.fromOffset;
+    // A smaller log than at launch was rotated meanwhile: read it all.
+    this.offset = from === undefined ? size : from <= size ? from : 0;
     if (this.options.backfillBytes && this.offset > 0) await this.backfill(this.options.backfillBytes);
     this.timer = setInterval(() => void this.poll(), this.options.pollMs ?? 200);
   }
@@ -166,7 +179,12 @@ export class LogFileTransport implements RuntimeTransport {
     }
   }
 
-  /** Replays the latest hello and match state found in the last `bytes` of the log. */
+  /**
+   * Replays the latest hello and match state found in the last `bytes` of
+   * the log, from the current play session only: lines before the latest
+   * session launch belong to an earlier session (whose runtime may since
+   * have been removed).
+   */
   private async backfill(bytes: number): Promise<void> {
     const start = Math.max(0, this.offset - bytes);
     const handle = await open(this.options.path, "r");
@@ -185,6 +203,7 @@ export class LogFileTransport implements RuntimeTransport {
     let state: number | undefined;
     for (let i = lines.length - 1; i >= 0 && (hello === undefined || state === undefined); i--) {
       const line = lines[i]!;
+      if (SESSION_LAUNCH.test(line)) break;
       if (line.includes(WIRE_MARKER)) {
         if (hello === undefined && /\|H\|/.test(line)) hello = i;
       } else if (state === undefined && minigameStateOf(line) !== undefined) {

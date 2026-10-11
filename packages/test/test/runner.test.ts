@@ -239,3 +239,27 @@ test("a test file that keeps failing to load is imported afresh on every retry",
   await writeFile(flag, "");
   assert.deepEqual((await loadTests([file])).tests.map((t) => t.name), ["ready"]);
 });
+
+test("with scenarios enabled, each YAML test tells the transport which device it expects", async () => {
+  const config = `${CONFIG()}scenario:\n  enabled: true\n  locations:\n    A: [0, 0, 0]\n`;
+  const dir = await project(config, { "a.test.yaml": YAML_TEST });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const expected: unknown[] = [];
+  const real = engine.adapter.transport.bind(engine.adapter);
+  engine.adapter.transport = () => Object.assign(real(), { expectScenario: (e: unknown) => void expected.push(e) });
+  try {
+    const summary = await runTests(engine, { skipBuild: true });
+    assert.equal(summary.status, "passed", JSON.stringify(summary, null, 2));
+    const { generateScenario, scenarioLocations, YamlTestSchema } = await import("@uefn-devtools/test");
+    const { parseDuration } = await import("@uefn-devtools/protocol");
+    const { parse } = await import("yaml");
+    const plan = generateScenario(YamlTestSchema.parse(parse(YAML_TEST)), {
+      id: "capture-a",
+      locations: scenarioLocations(engine.config),
+      startDelayMs: parseDuration(engine.config.scenario.start_delay),
+    }).fingerprint;
+    assert.deepEqual(expected, [{ id: "capture-a", plan }]);
+  } finally {
+    await engine.close();
+  }
+});

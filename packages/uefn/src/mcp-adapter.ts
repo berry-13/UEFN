@@ -13,6 +13,7 @@ import type {
   StartSessionOptions,
   UEFNAdapter,
 } from "./adapter.ts";
+import { stat } from "node:fs/promises";
 import { RealClock, type Clock } from "./clock.ts";
 import { LogFileTransport } from "./log-transport.ts";
 import { ScenarioTransport } from "./scenario-transport.ts";
@@ -212,6 +213,22 @@ export class McpUefnAdapter implements UEFNAdapter {
   }
 
   /** True / false from the mapped game_state tool; undefined when unmapped or unknown. */
+  /**
+   * Ends the running match and starts a new one, waiting (up to
+   * mcp.timeout_ms) for UEFN to leave the running state in between, since
+   * StartGame is refused while a match runs.
+   */
+  async restartGame(): Promise<CommandResult> {
+    const ended = await this.gameCommand("end_game");
+    if (!ended.ok) return ended;
+    const deadline = Date.now() + this.options.mcp.timeout_ms;
+    while ((await this.gameRunning()) === true) {
+      if (Date.now() > deadline) return { ok: false, error: "UEFN still reports the match running after StopGame; cannot restart it for the scenario device" };
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return this.gameCommand("start_game");
+  }
+
   private async gameRunning(): Promise<boolean | undefined> {
     const name = this.options.mcp.tools.game_state;
     if (!name || !this.hasTool(name)) return undefined;
@@ -258,6 +275,9 @@ export class McpUefnAdapter implements UEFNAdapter {
     if (this.session) return { id: this.session.id, reused: true };
     const status = await this.settledSessionStatus();
     const reused = status === "connected" || status === "playing";
+    // StartSession returns once the client is in the match, by which time
+    // the runtime may have logged its hello; read the log from before launch.
+    const launchOffset = !reused && this.options.logPath ? await stat(this.options.logPath).then((s) => s.size, () => 0) : undefined;
     if (!reused) {
       // No `headed` argument: every UEFN play session launches the Fortnite
       // client (seen in real editor logs), and an unknown argument could make
@@ -284,8 +304,12 @@ export class McpUefnAdapter implements UEFNAdapter {
       path: this.options.logPath,
       clock: this.clock,
       ...(reused ? { backfillBytes: BACKFILL_BYTES } : {}),
+      ...(launchOffset !== undefined ? { fromOffset: launchOffset } : {}),
     });
-    const commands = new McpCommandTransport(log, this);
+    // A scenario device runs once per match, at its start. In a reused session
+    // whose match already runs, it ran before this process attached (and its
+    // reports are not backfilled), so the first start_game restarts the match.
+    const commands = new McpCommandTransport(log, this, { restartRunningMatch: reused && this.options.scenario !== undefined });
     const transport = this.options.scenario
       ? new ScenarioTransport(commands, { clock: this.clock, stepTimeoutMs: this.options.scenario.stepTimeoutMs })
       : commands;
@@ -452,11 +476,15 @@ export function extractDiagnostics(out: ToolOutput): Diagnostic[] {
 class McpCommandTransport implements RuntimeTransport {
   readonly name: string;
 
+  private restartRunningMatch: boolean;
+
   constructor(
     private readonly inner: LogFileTransport,
     private readonly adapter: McpUefnAdapter,
+    options: { restartRunningMatch?: boolean } = {},
   ) {
     this.name = `${inner.name}+mcp`;
+    this.restartRunningMatch = options.restartRunningMatch === true;
   }
 
   start(): Promise<void> {
@@ -473,7 +501,11 @@ class McpCommandTransport implements RuntimeTransport {
 
   async command(command: RuntimeCommand): Promise<CommandResult> {
     if ((command.type === "start_game" || command.type === "end_game") && this.adapter.gameCommands().includes(command.type)) {
-      const result = await this.adapter.gameCommand(command.type);
+      let result = await this.adapter.gameCommand(command.type);
+      if (command.type === "start_game" && this.restartRunningMatch) {
+        this.restartRunningMatch = false;
+        if (result.noop) result = await this.adapter.restartGame();
+      }
       // UEFN already had the match in the wanted state (it auto-starts one on
       // launch), so no lifecycle line may follow; emit the event so the
       // derived phase, and with it the runner's end_game cleanup, see it.
