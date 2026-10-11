@@ -8,3 +8,5 @@ export * from "./audit.ts";
 export * from "./engine.ts";
 export * from "./persistence.ts";
 export * from "./recorder.ts";
+export * from "./deps.ts";
+export * from "./doctor.ts";
