@@ -1,0 +1,19 @@
+{
+  "name": "@uefn-devtools/desktop",
+  "version": "0.1.0",
+  "description": "DevTools dashboard: a local web app served by the daemon and opened in an app window.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "public"],
+  "devDependencies": {
+    "@uefn-devtools/daemon": "workspace:*",
+    "@uefn-devtools/protocol": "workspace:*"
+  }
+}

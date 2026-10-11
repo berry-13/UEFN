@@ -7,6 +7,7 @@
     { "path": "../../packages/core" },
     { "path": "../../packages/test" },
     { "path": "../../packages/mcp" },
-    { "path": "../../packages/daemon" }
+    { "path": "../../packages/daemon" },
+    { "path": "../desktop" }
   ]
 }

@@ -111,6 +111,11 @@ export class DaemonClient {
   }
 
   /** Asks the daemon process to stop (it removes daemon.json on the way out). */
+  /** Single-use, 60s ticket the dashboard trades for the token (`POST /api/ui/exchange`). */
+  uiTicket(): Promise<{ ticket: string; expiresAt: number }> {
+    return this.request("POST", "/api/ui/ticket");
+  }
+
   shutdown(): Promise<{ stopping: true }> {
     return this.request("POST", "/api/shutdown");
   }

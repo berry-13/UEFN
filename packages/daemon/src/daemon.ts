@@ -21,13 +21,16 @@ import {
 } from "./api.ts";
 import { readDaemonInfo, removeDaemonInfo, writeDaemonInfo } from "./info.ts";
 
+const TICKET_TTL_MS = 60_000;
+const TicketBody = z.object({ ticket: z.string().min(1).max(256) });
+
 export interface DaemonOptions {
   engine: DevToolsEngine;
   /** TCP port on 127.0.0.1; 0 picks an ephemeral port (default). */
   port?: number;
   /** Fixed bearer token (tests); a random one is generated otherwise. */
   token?: string;
-  /** Serve files from this directory under `/` (GET/HEAD only). */
+  /** Serve files from this directory under `/` (GET/HEAD only, no token needed). */
   staticDir?: string;
   /** Called on `POST /api/shutdown`; defaults to {@link DevToolsDaemon.stop}. */
   onShutdown?: () => void;
@@ -111,6 +114,8 @@ interface Route {
 export class DevToolsDaemon {
   readonly engine: DevToolsEngine;
   readonly token: string;
+  /** Single-use dashboard launch tickets: ticket to expiry (epoch ms). */
+  private readonly tickets = new Map<string, number>();
   private readonly server: Server;
   private readonly lock = new Mutex();
   private readonly audit: AuditLog;
@@ -159,7 +164,7 @@ export class DevToolsDaemon {
     this.unsubscribe = this.engine.events.subscribe((event, index) => this.onRuntimeEvent(event, index));
     this.heartbeat = setInterval(() => this.broadcastRaw(": heartbeat\n\n"), this.options.heartbeatMs ?? HEARTBEAT_MS);
     this.heartbeat.unref();
-    this.info = { pid: process.pid, port, token: this.token, root, startedAt: Date.now(), version: DAEMON_VERSION };
+    this.info = { pid: process.pid, port, token: this.token, root, startedAt: Date.now(), version: DAEMON_VERSION, ui: !!this.staticRoot };
     await writeDaemonInfo(this.info);
     return this.info;
   }
@@ -185,6 +190,20 @@ export class DevToolsDaemon {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!hostAllowed(req.headers.host)) throw new HttpError(403, "host not allowed");
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    // Static UI assets hold no secrets, so they load without the token (the UI gets it from the URL fragment).
+    if (this.staticRoot && !url.pathname.startsWith("/api/") && (req.method === "GET" || req.method === "HEAD")) {
+      return this.serveStatic(req, res, url);
+    }
+    // The dashboard URL carries a launch ticket, not the token: the page trades
+    // it here once, so the token never sits in a command line, log or history.
+    if (this.staticRoot && url.pathname === "/api/ui/exchange") {
+      if (req.method !== "POST") throw new HttpError(405, "method not allowed");
+      const { ticket } = TicketBody.parse(await readJson(req));
+      const expires = this.tickets.get(ticket);
+      this.tickets.delete(ticket);
+      if (expires === undefined || expires < Date.now()) throw new HttpError(401, "invalid or expired ticket");
+      return sendJson(res, 200, { token: this.token });
+    }
     // EventSource cannot set headers, so the stream alone may carry the token in the query.
     const queryToken = url.pathname === "/api/stream" ? url.searchParams.get("token") : null;
     if (!this.authorized(req.headers.authorization, queryToken)) {
@@ -209,7 +228,6 @@ export class DevToolsDaemon {
       }
       throw new HttpError(methodMismatch ? 405 : 404, methodMismatch ? "method not allowed" : `no route for ${url.pathname}`);
     }
-    if (this.staticRoot && (req.method === "GET" || req.method === "HEAD")) return this.serveStatic(req, res, url);
     throw new HttpError(404, "not found");
   }
 
@@ -296,6 +314,18 @@ export class DevToolsDaemon {
       },
       {
         method: "POST",
+        path: "/api/ui/ticket",
+        handler: async () => {
+          if (!this.staticRoot) throw new HttpError(404, "this daemon does not serve the dashboard");
+          const now = Date.now();
+          for (const [t, exp] of this.tickets) if (exp < now) this.tickets.delete(t);
+          const ticket = randomBytes(24).toString("base64url");
+          this.tickets.set(ticket, now + TICKET_TTL_MS);
+          return { ticket, expiresAt: now + TICKET_TTL_MS };
+        },
+      },
+      {
+        method: "POST",
         path: "/api/shutdown",
         handler: mutating("daemon.shutdown", async () => {
           setImmediate(this.options.onShutdown ?? (() => void this.stop()));
@@ -327,6 +357,7 @@ export class DevToolsDaemon {
         startedAt: this.info?.startedAt ?? 0,
         version: DAEMON_VERSION,
         streams: this.streams.size,
+        ui: !!this.staticRoot,
       },
     };
   }
@@ -452,6 +483,9 @@ export class DevToolsDaemon {
       "content-type": CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
       "content-length": info.size,
       "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      "referrer-policy": "no-referrer",
+      "cache-control": "no-cache",
     });
     if (req.method === "HEAD") return void res.end();
     createReadStream(file).pipe(res);

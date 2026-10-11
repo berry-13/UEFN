@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="referrer" content="no-referrer" />
+    <title>UEFN DevTools</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/main.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="session-bar">
+      <div class="brand">
+        <h1>UEFN DevTools</h1>
+        <p class="connection">
+          <span class="dot" id="conn-dot" aria-hidden="true"></span>
+          <span id="conn" role="status" aria-live="polite">Connecting to the daemon</span>
+        </p>
+      </div>
+      <dl class="session-facts">
+        <div><dt>Project</dt><dd id="s-project">...</dd></div>
+        <div><dt>Adapter</dt><dd id="s-adapter">...</dd></div>
+        <div><dt>Session</dt><dd id="s-session">...</dd></div>
+        <div><dt>Runtime</dt><dd id="s-runtime">...</dd></div>
+        <div><dt>Phase</dt><dd id="s-phase">...</dd></div>
+        <div><dt>Events</dt><dd id="s-events">...</dd></div>
+      </dl>
+      <div class="actions" role="group" aria-label="Session actions">
+        <button type="button" id="btn-compile">Compile</button>
+        <button type="button" id="btn-start" class="primary">Start session</button>
+        <button type="button" id="btn-stop">Stop session</button>
+      </div>
+      <p id="action-status" class="action-status" role="status" aria-live="polite"></p>
+      <p id="action-error" class="error" role="alert" hidden></p>
+    </header>
+
+    <nav class="tabs-nav" aria-label="Views">
+      <div role="tablist" aria-label="Views" id="tablist">
+        <button type="button" role="tab" id="tab-state" aria-controls="panel-state" aria-selected="true">Live state</button>
+        <button type="button" role="tab" id="tab-events" aria-controls="panel-events" aria-selected="false" tabindex="-1">Events</button>
+        <button type="button" role="tab" id="tab-time" aria-controls="panel-time" aria-selected="false" tabindex="-1">Time travel</button>
+        <button type="button" role="tab" id="tab-tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1">Tests</button>
+      </div>
+    </nav>
+
+    <main id="main" tabindex="-1">
+      <section role="tabpanel" id="panel-state" aria-labelledby="tab-state" tabindex="0">
+        <h2 class="visually-hidden">Live state</h2>
+        <div id="live-state" class="grid"><p class="empty">Loading state.</p></div>
+      </section>
+
+      <section role="tabpanel" id="panel-events" aria-labelledby="tab-events" hidden>
+        <h2 class="visually-hidden">Event stream</h2>
+        <div class="toolbar">
+          <label>Type
+            <select id="ev-type"><option value="">All types</option></select>
+          </label>
+          <label>Search
+            <input type="search" id="ev-search" placeholder="id, type, entity, payload" autocomplete="off" />
+          </label>
+          <button type="button" id="ev-pause" aria-pressed="false">Pause</button>
+          <p id="ev-count" class="muted"></p>
+        </div>
+        <div class="split">
+          <div id="event-list" class="event-list"></div>
+          <aside class="detail card" aria-labelledby="detail-heading">
+            <h3 id="detail-heading">Event detail</h3>
+            <div id="event-detail"><p class="empty">Select an event to see its payload and causal trace.</p></div>
+          </aside>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="panel-time" aria-labelledby="tab-time" hidden>
+        <h2 class="visually-hidden">Time travel</h2>
+        <div class="card timeline">
+          <div class="timeline-row">
+            <label for="tt-slider">Event index</label>
+            <input type="range" id="tt-slider" min="0" max="0" value="0" step="1" disabled />
+            <div class="actions" role="group" aria-label="Step through events">
+              <button type="button" id="tt-prev">Previous event</button>
+              <button type="button" id="tt-next">Next event</button>
+            </div>
+            <label class="check"><input type="checkbox" id="tt-live" checked /> Live</label>
+          </div>
+          <p id="tt-position" class="muted">Live state.</p>
+          <p class="muted small">
+            Time travel replays the event log from its first event, while the live state is reset at the start of each
+            test, so the two can differ.
+          </p>
+        </div>
+        <div id="tt-state" class="grid"></div>
+      </section>
+
+      <section role="tabpanel" id="panel-tests" aria-labelledby="tab-tests" hidden>
+        <h2 class="visually-hidden">Tests</h2>
+        <form id="run-form" class="card toolbar" novalidate>
+          <label>Repeat
+            <input type="number" id="run-repeat" min="1" max="1000" value="1" inputmode="numeric" />
+          </label>
+          <label>Seed
+            <input type="number" id="run-seed" inputmode="numeric" placeholder="optional" />
+          </label>
+          <label class="check"><input type="checkbox" id="run-compile" checked /> Compile first</label>
+          <button type="submit" id="run-all" class="primary">Run all tests</button>
+        </form>
+        <section class="card" aria-labelledby="progress-heading">
+          <h3 id="progress-heading">Progress</h3>
+          <div class="progress-row">
+            <label for="run-progress" class="visually-hidden">Attempts completed</label>
+            <progress id="run-progress" max="1" value="0"></progress>
+            <span id="run-stage" class="muted">Idle</span>
+          </div>
+          <p id="run-live" role="status" aria-live="polite">No run yet.</p>
+          <p id="run-error" class="error" role="alert" hidden></p>
+        </section>
+        <section class="card" aria-labelledby="tests-heading">
+          <h3 id="tests-heading">Tests</h3>
+          <div id="test-list"><p class="empty">Loading tests.</p></div>
+        </section>
+        <section aria-labelledby="results-heading">
+          <h3 id="results-heading">Results</h3>
+          <div id="results"><p class="empty">Run tests to see results here.</p></div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

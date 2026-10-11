@@ -35,13 +35,22 @@ Duration: 0.83s
 | Area | State |
 |---|---|
 | Test runner: TS + YAML, lifecycle state machine, repeat/seed, failure correlation, artifacts | working |
+| State snapshots (`toMatchSnapshot`, YAML `snapshot:`, `--update-snapshots`) | working |
+| `--headed` live state view and `--debug` step debugger | working (simulated; `headed` hint to UEFN unverified) |
 | Engine: event store, derived state, causal traces, time-travel replay, git capture | working |
-| CLI: `status`, `capabilities`, `compile`, `test`, `trace`, `mcp`, `init` | working |
-| MCP server (20 tools, permission modes, audit log) | working |
-| Simulated adapter: deterministic capture-point world with fault injection | working |
+| SQLite persistence: sessions, events, runs, per-test history (`uefn history`) | working |
+| Daemon: one shared engine and session over a local HTTP + SSE API | working |
+| Desktop dashboard (`uefn ui`): live state, events, time travel, tests | working |
+| VS Code extension: Test Explorer, Verse diagnostics, live events, YAML schema | packaged and smoke-tested; most views unverified in the editor |
+| Recorder (`uefn record`): observed session to a YAML test | working (scripted on the simulator; interactive needs real UEFN) |
+| `uefn doctor` and `uefn deps` (Verse dependency graph, test impact) | working |
+| Profiler (`uefn profile`, Chrome trace export, `uefn_profile` MCP tool) | working on the simulator; Verse helpers unverified |
+| GitHub: JUnit and Actions reporters, job summary, `init --github`, `ci comment` | working |
+| CLI: `status`, `doctor`, `capabilities`, `compile`, `list`, `test`, `profile`, `trace`, `deps`, `record`, `history`, `daemon`, `ui`, `mcp`, `init`, `ci` | working |
+| MCP server (21 tools, permission modes, audit log) | working |
+| Simulated adapter: deterministic capture-point world with fault injection and perf samples | working |
 | UEFN MCP adapter + log-file transport | written, **not yet verified against UEFN** |
 | Verse runtime emitter (`runtime/verse`) | written, **not yet compiled in UEFN** |
-| Desktop app, daemon, recorder, doctor, deps graph, profiler | not started |
 
 Everything runs today against the **simulated adapter**. That covers
 developing the engine, test API and agent loop. It does not prove the
@@ -95,14 +104,18 @@ as done until compile and the reproduction test both pass.
 
 ```
 apps/cli               uefn command
+apps/desktop           dashboard served by the daemon (uefn ui)
+apps/vscode            VS Code extension
 packages/protocol      schemas: events, sessions, tests, config, wire format
 packages/uefn          UEFNAdapter, RuntimeTransport, simulator, MCP adapter, log transport
-packages/core          DevToolsEngine, event store, state reducer, git, audit
-packages/test          test()/expect(), YAML tests, runner, reporter
+packages/core          DevToolsEngine, event store, state reducer, git, audit, persistence,
+                       recorder, profiler, doctor, deps graph
+packages/test          test()/expect(), YAML tests, snapshots, runner, reporters, debug hooks
+packages/daemon        DevToolsDaemon (HTTP + SSE) and DaemonClient
 packages/mcp           MCP server
 runtime/verse          in-game DevTools emitter
 examples/capture-point example island config, Verse and tests
-docs/                  architecture, protocol, tests, capabilities
+docs/                  architecture, protocol, tests, capabilities, and one page per feature
 ```
 
 ## Development
@@ -112,4 +125,4 @@ pnpm build        # tsc -b across the workspace
 pnpm test         # build, then node:test suites
 ```
 
-Requires Node ≥ 22.18 (type stripping is used to load `.test.ts` files) and pnpm 10.
+Requires Node >= 22.18 (type stripping is used to load `.test.ts` files) and pnpm 10.
