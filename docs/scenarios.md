@@ -94,9 +94,12 @@ player moved.
   location, an unsupported step) fails validation before anything runs.
   `game.ended` releases the lock and drops the match's unconsumed reports; a
   step still waiting fails then.
-- When `uefn test` attaches to a session whose match is already running,
-  the device ran before the host attached, so the first `start_game`
-  restarts the match (StopGame, then StartGame) to run the device again.
+- When the match is already running at the test's first `start_game` (a
+  reused session, or the match UEFN auto-starts on launch), the device ran
+  before the test began, so that `start_game` restarts the match (StopGame,
+  then StartGame) to run the device inside the test. Scenario devices are
+  only used with the `mcp` adapter; the simulator performs player actions
+  itself, so `--adapter simulated` ignores `scenario.enabled`.
 - A player is captured at the player's first step and reused, so players
   joining or leaving later do not shift who a step acts on. Each step reads
   the player's current character, so after an `eliminate` the next

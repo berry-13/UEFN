@@ -108,11 +108,9 @@ export class ScenarioTransport implements RuntimeTransport {
     const id = typeof p["scenario"] === "string" ? p["scenario"] : "";
     if (event.type === "scenario.started") {
       const plan = typeof p["plan"] === "string" ? p["plan"] : undefined;
-      if (!this.locked && this.expected && (this.expected.id !== id || this.expected.plan !== plan)) {
-        this.conflict =
-          this.expected.id !== id
-            ? `the scenario device in this match is for '${id || "(untagged)"}', not '${this.expected.id}'; place the device generated for this test ('uefn scenario ${this.expected.id}')`
-            : `the placed scenario device for '${id}' is stale (plan ${plan ?? "?"}, the test generates ${this.expected.plan}); regenerate it with 'uefn scenario ${id}' and compile`;
+      const mismatch = this.locked ? undefined : this.mismatch(id, plan);
+      if (mismatch) {
+        this.conflict = mismatch;
         this.locked = { id, ...(plan !== undefined ? { plan } : {}) };
       } else if (this.locked && this.locked.id !== id) {
         this.conflict = `scenario devices for '${this.locked.id || "(untagged)"}' and '${id || "(untagged)"}' both run in this match; place one scenario device per test`;
@@ -148,6 +146,28 @@ export class ScenarioTransport implements RuntimeTransport {
    */
   expectScenario(expected: { id: string; plan: string } | undefined): void {
     this.expected = expected;
+    // A device may have started (and been locked onto) before the test said
+    // which one it expects: check it now.
+    if (expected && this.locked && !this.conflict) {
+      const conflict = this.mismatch(this.locked.id, this.locked.plan);
+      if (conflict) {
+        this.conflict = conflict;
+        for (const wake of this.waiters) wake();
+      }
+    }
+  }
+
+  /** Why a device that started as `id` / `plan` is not the expected one, if it is not. */
+  private mismatch(id: string, plan: string | undefined): string | undefined {
+    const expected = this.expected;
+    if (!expected) return undefined;
+    if (expected.id !== id) {
+      return `the scenario device in this match is for '${id || "(untagged)"}', not '${expected.id}'; place the device generated for this test ('uefn scenario ${expected.id}')`;
+    }
+    if (expected.plan !== plan) {
+      return `the placed scenario device for '${id}' is stale (plan ${plan ?? "?"}, the test generates ${expected.plan}); regenerate it with 'uefn scenario ${id}' and compile`;
+    }
+    return undefined;
   }
 
   async command(command: RuntimeCommand): Promise<CommandResult> {

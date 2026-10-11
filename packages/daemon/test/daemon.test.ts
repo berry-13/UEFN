@@ -488,3 +488,14 @@ test("a live daemon that misses a probe keeps its lock", async () => {
     server.close();
   }
 });
+
+test("releasing a lock leaves an unreadable replacement in place", async () => {
+  const { acquireDaemonLock } = await import("@uefn-devtools/daemon");
+  const dir = await mkdtemp(join(tmpdir(), "uefn-devtools-lock-"));
+  await mkdir(join(dir, ".devtools"), { recursive: true });
+  const lock = await acquireDaemonLock(dir);
+  // Another process took the lock over and has not finished writing it.
+  await writeFile(daemonLockPath(dir), "");
+  await lock.release();
+  assert.equal(await readFile(daemonLockPath(dir), "utf8"), "");
+});

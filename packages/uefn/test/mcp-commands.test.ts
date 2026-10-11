@@ -452,3 +452,63 @@ await server.connect(new StdioServerTransport());
     await adapter.disconnect();
   }
 });
+
+test("scenario mode restarts a match UEFN auto-started on a fresh launch", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-mcp-restart-fresh-"));
+  const calls = join(dir, "calls.txt");
+  const script = join(dir, "restart.mjs");
+  const mcp = import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js");
+  const stdio = import.meta.resolve("@modelcontextprotocol/sdk/server/stdio.js");
+  // A connected session whose match runs; StopGame ends it, StartGame starts one.
+  await writeFile(
+    script,
+    `import { McpServer } from ${JSON.stringify(mcp)};
+import { StdioServerTransport } from ${JSON.stringify(stdio)};
+import { appendFileSync } from "node:fs";
+const server = new McpServer({ name: "fake-uefn-restart-fresh", version: "0" });
+let state = "Unconnected";
+let session = "Disconnected";
+const tools = {
+  GetSessionStatus: () => session,
+  StartSession: () => { session = "Connected"; state = "Running"; return "Completed"; },
+  GetGameState: () => state,
+  StopGame: () => { state = "CanStart"; return null; },
+  StartGame: () => { const ok = state === "CanStart"; state = "Running"; return ok ? null : "refused"; },
+};
+for (const [name, fn] of Object.entries(tools)) {
+  server.registerTool(name, { description: name }, async () => {
+    appendFileSync(${JSON.stringify(calls)}, name + "\\n");
+    const value = fn();
+    return { content: [{ type: "text", text: JSON.stringify({ returnValue: value }) }], isError: value === "refused" };
+  });
+}
+await server.connect(new StdioServerTransport());
+`,
+  );
+  await writeFile(calls, "");
+  const log = join(dir, "UnrealEditorFortnite.log");
+  await writeFile(log, "[2026.10.09-10.00.01:000][  2]LogValkyrieBeacon: [3974] (ValkyrieBeaconClient_3) MinigameStateChanged: EFortMinigameState::InProgress\n");
+  const adapter = new McpUefnAdapter({
+    mcp: McpAdapterConfig.parse({
+      command: process.execPath,
+      args: [script],
+      tools: { start_session: "StartSession", session_state: "GetSessionStatus", start_game: "StartGame", end_game: "StopGame", game_state: "GetGameState" },
+      timeout_ms: 20_000,
+    }),
+    logPath: log,
+    sessionPollMs: 10,
+    scenario: { stepTimeoutMs: 1000 },
+  });
+  try {
+    await adapter.connect();
+    assert.equal((await adapter.startSession()).reused, false);
+    // Not a no-op: the match was restarted, so the caller waits for its start.
+    assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true });
+    // Only the first start restarts; later attempts start normally.
+    assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true, noop: true });
+    const sent = (await readFile(calls, "utf8")).trim().split("\n").filter((c) => c === "StopGame" || c === "StartGame");
+    assert.deepEqual(sent, ["StopGame", "StartGame"]);
+  } finally {
+    await adapter.disconnect();
+  }
+});

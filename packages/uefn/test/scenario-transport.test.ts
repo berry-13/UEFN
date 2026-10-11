@@ -147,3 +147,14 @@ test("a host spawn after a lethal damage step is covered by the device's next mo
   assert.deepEqual(await t.command({ type: "spawn_player", player: "player1" }), { ok: true });
   assert.deepEqual(await t.command({ type: "teleport", player: "player1", location: "A" } as RuntimeCommand), { ok: true });
 });
+
+test("a device locked before the test states its expectation is checked when it does", async () => {
+  const t = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 60_000 });
+  // Auto-started match: the device starts before runAttempt calls expectScenario.
+  t.observe(ev("scenario.started", { scenario: "s", plan: "old", steps: 1 }));
+  const started = Date.now();
+  const pending = t.command({ type: "spawn_player", player: "player1" });
+  t.expectScenario({ id: "s", plan: "new" });
+  assert.match((await pending).error!, /stale \(plan old, the test generates new\)/);
+  assert.ok(Date.now() - started < 1000);
+});

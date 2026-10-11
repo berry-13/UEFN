@@ -125,7 +125,9 @@ function toItems(events: readonly RuntimeEvent[], options: Required<GenerateOpti
       case EventTypes.DeviceStateChanged: {
         const id = str(p["device"]) ?? e.source?.id;
         if (!id || typeof p["enabled"] !== "boolean") break;
-        const previous = enabled.get(id) ?? (!baseline && e.timestamp > baselineUntil ? true : undefined);
+        // The baseline value when the device has one; otherwise a device first
+        // seen after the match started was enabled (the default) until now.
+        const previous = enabled.get(id) ?? (e.timestamp > baselineUntil ? true : undefined);
         enabled.set(id, p["enabled"]);
         if (previous !== undefined && previous !== p["enabled"]) {
           items.push({ timestamp: e.timestamp, step: p["enabled"] ? { enable_device: { id } } : { disable_device: { id } } });

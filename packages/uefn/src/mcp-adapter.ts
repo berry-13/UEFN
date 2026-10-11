@@ -313,10 +313,11 @@ export class McpUefnAdapter implements UEFNAdapter {
       ...(reused ? { backfillBytes: BACKFILL_BYTES } : {}),
       ...(launchOffset !== undefined ? { fromOffset: launchOffset } : {}),
     });
-    // A scenario device runs once per match, at its start. In a reused session
-    // whose match already runs, it ran before this process attached (and its
-    // reports are not backfilled), so the first start_game restarts the match.
-    const commands = new McpCommandTransport(log, this, { restartRunningMatch: reused && this.options.scenario !== undefined });
+    // A scenario device runs once per match, at its start. A match already
+    // running when the test starts (a reused session, or one UEFN auto-started
+    // on launch) ran it before the test reset its observed state, so the first
+    // start_game restarts the match to run the device inside the test.
+    const commands = new McpCommandTransport(log, this, { restartRunningMatch: this.options.scenario !== undefined });
     const transport = this.options.scenario
       ? new ScenarioTransport(commands, { clock: this.clock, stepTimeoutMs: this.options.scenario.stepTimeoutMs })
       : commands;

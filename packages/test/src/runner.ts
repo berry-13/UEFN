@@ -108,10 +108,10 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       if (other) throw new StageError("VALIDATING", `duplicate test id '${t.id}' in ${relative(engine.root, other)} and ${relative(engine.root, t.file)}`);
       seen.set(t.id, t.file);
     }
-    if (engine.config.scenario.enabled) {
+    if (engine.usesScenarioDevices) {
       // A test whose device cannot be generated would only time out later.
       const invalid: string[] = [];
-      for (const t of selected) {
+      for (const t of selected.filter((t) => !t.skip)) {
         try {
           expectedScenario(engine, t);
         } catch (error) {
@@ -268,7 +268,7 @@ async function runAttempt(
   if (engine.supportsCommand("reset")) await engine.command({ type: "reset" });
   if (engine.supportsCommand("seed")) await engine.command({ type: "seed", seed });
   engine.resetObservedState();
-  if (engine.config.scenario.enabled) engine.expectScenario(expectedScenario(engine, def));
+  if (engine.usesScenarioDevices) engine.expectScenario(expectedScenario(engine, def));
   const ctx = new TestContext(
     engine,
     engine.events.mark(),
@@ -349,9 +349,21 @@ async function runAttempt(
     // Wait for the match to end, as GameFixture.end() does, so a repeat or
     // retry does not start while this match (and its scenario device) winds down.
     const from = engine.events.mark();
-    const ended = await engine.command({ type: "end_game" }).catch(() => undefined);
-    if (ended && engine.state.phase === "playing") {
-      await engine.waitForEvent({ type: "game.ended" }, { timeoutMs: ctx.expectTimeout, fromIndex: from }).catch(() => {});
+    const cleanup = await engine
+      .command({ type: "end_game" })
+      .then(async () => {
+        if (engine.state.phase === "playing") await engine.waitForEvent({ type: "game.ended" }, { timeoutMs: ctx.expectTimeout, fromIndex: from });
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => (e as Error).message,
+      );
+    // A match left running would leak into the next attempt or test, so a
+    // failed cleanup fails the attempt instead of passing silently.
+    if (cleanup !== undefined && status === "passed") {
+      status = "error";
+      error = `cleanup could not end the match: ${cleanup}`;
+      failedStage = "CLEANUP";
     }
   }
 

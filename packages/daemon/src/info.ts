@@ -189,7 +189,8 @@ async function lockIsStale(root: string, path: string, holder: LockContents | un
 }
 
 async function releaseLock(path: string, nonce: string): Promise<void> {
+  // Only our own lock: an unreadable file may be a replacement still being written.
   const holder = await readLock(path);
-  if (holder && holder.nonce !== nonce) return;
+  if (holder?.nonce !== nonce) return;
   await rm(path, { force: true });
 }

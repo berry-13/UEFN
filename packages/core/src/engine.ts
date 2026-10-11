@@ -195,6 +195,11 @@ export class DevToolsEngine {
     return this.lastCompile;
   }
 
+  /** True when player actions go to an in-game scenario device (scenario.enabled on a real UEFN adapter). */
+  get usesScenarioDevices(): boolean {
+    return this.config.scenario.enabled && this.adapter.name === "mcp";
+  }
+
   /** Tells a scenario transport which device the running test expects (see ScenarioTransport). */
   expectScenario(expected: { id: string; plan: string } | undefined): void {
     if (this.currentSession) this.adapter.transport().expectScenario?.(expected);

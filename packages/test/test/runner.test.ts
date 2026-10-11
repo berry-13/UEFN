@@ -244,6 +244,8 @@ test("with scenarios enabled, each YAML test tells the transport which device it
   const config = `${CONFIG()}scenario:\n  enabled: true\n  locations:\n    A: [0, 0, 0]\n`;
   const dir = await project(config, { "a.test.yaml": YAML_TEST });
   const engine = await DevToolsEngine.open({ cwd: dir });
+  // As on a real UEFN adapter: the simulator has no scenario devices.
+  Object.defineProperty(engine, "usesScenarioDevices", { get: () => true });
   const expected: unknown[] = [];
   const real = engine.adapter.transport.bind(engine.adapter);
   engine.adapter.transport = () => Object.assign(real(), { expectScenario: (e: unknown) => void expected.push(e) });
@@ -266,10 +268,49 @@ test("with scenarios enabled, each YAML test tells the transport which device it
 
 test("with scenarios enabled, a test whose device cannot be generated fails validation", async () => {
   // Location A has no position in scenario.locations or the simulator config.
-  const dir = await project(`${CONFIG()}scenario:\n  enabled: true\n`, { "a.test.yaml": YAML_TEST });
+  const dir = await project(`${CONFIG()}scenario:\n  enabled: true\n`, {
+    "a.test.yaml": YAML_TEST,
+    // Skipped tests are not run, so they are not validated either.
+    "skipped.test.yaml": YAML_TEST.replace("name: Capture A", "name: Skipped\nskip: true").replace("location: A", "location: Nowhere"),
+  });
   const engine = await DevToolsEngine.open({ cwd: dir });
-  const summary = await runTests(engine, { skipBuild: true });
-  await engine.close();
-  assert.equal(summary.failedStage, "VALIDATING");
-  assert.match(summary.error ?? "", /scenario cannot be generated for capture-a: teleport: no position for 'A'/);
+  try {
+    // The simulator executes player actions itself: no device, nothing to generate.
+    const simulated = await runTests(engine, { skipBuild: true });
+    assert.equal(simulated.status, "passed", JSON.stringify(simulated, null, 2));
+    Object.defineProperty(engine, "usesScenarioDevices", { get: () => true });
+    const summary = await runTests(engine, { skipBuild: true });
+    assert.equal(summary.failedStage, "VALIDATING");
+    assert.match(summary.error ?? "", /scenario cannot be generated for capture-a: teleport: no position for 'A'/);
+    assert.doesNotMatch(summary.error ?? "", /skipped/);
+  } finally {
+    await engine.close();
+  }
+});
+
+test("an attempt whose cleanup cannot end the match does not pass", async () => {
+  const dir = await project(CONFIG(), { "a.test.yaml": YAML_TEST });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const real = engine.adapter.transport.bind(engine.adapter);
+  engine.adapter.transport = () => {
+    const inner = real();
+    return {
+      ...inner,
+      name: inner.name,
+      start: () => inner.start(),
+      stop: () => inner.stop(),
+      receive: () => inner.receive(),
+      supportedCommands: () => inner.supportedCommands(),
+      command: async (command) => (command.type === "end_game" ? { ok: false, error: "StopGame refused" } : inner.command(command)),
+    };
+  };
+  try {
+    const summary = await runTests(engine, { skipBuild: true });
+    const attempt = summary.tests[0]!.attempts[0]!;
+    assert.equal(attempt.status, "error");
+    assert.equal(attempt.failedStage, "CLEANUP");
+    assert.match(attempt.error ?? "", /cleanup could not end the match: StopGame refused/);
+  } finally {
+    await engine.close();
+  }
 });

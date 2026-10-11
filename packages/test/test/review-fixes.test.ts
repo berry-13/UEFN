@@ -52,6 +52,11 @@ test("generator seeds device enabled state from the recording baseline", () => {
   assert.doesNotMatch(generateYamlTest(rec(events, { baseline: { devices: { D: true } } })).yaml, /enable_device/);
 });
 
+test("a device missing from the baseline keeps the default-enabled fallback", () => {
+  const events = [ev(EventTypes.GameStarted, 0), ev(EventTypes.DeviceStateChanged, 5000, { device: "New", enabled: false })];
+  assert.match(generateYamlTest(rec(events, { baseline: { devices: { D: true } } })).yaml, /disable_device: \{ id: New \}|disable_device:\s*\n?\s*id: New/);
+});
+
 const SUMMARY = {
   runId: "r",
   status: "failed",
