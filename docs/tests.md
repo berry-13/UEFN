@@ -149,6 +149,7 @@ uefn test capture --repeat 100 --seed 1
 uefn test --watch
 uefn test --update-snapshots   # accept new or changed state snapshots
 uefn test --json              # RunSummary on stdout
+uefn list [filter] --json     # discovered tests (id, name, file, format, line) without running them
 ```
 
 Exit codes: `0` passed · `1` a test failed · `2` the run could not complete

@@ -7,6 +7,7 @@
     { "path": "packages/test" },
     { "path": "packages/mcp" },
     { "path": "packages/daemon" },
-    { "path": "apps/cli" }
+    { "path": "apps/cli" },
+    { "path": "apps/vscode" }
   ]
 }
