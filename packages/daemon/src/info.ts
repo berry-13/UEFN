@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { chmod, link, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
 import { join } from "node:path";
 import type { DaemonInfo } from "./api.ts";
 
@@ -123,10 +124,14 @@ export async function acquireDaemonLock(root: string): Promise<DaemonLock> {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
     const holder = await readLock(path);
+    // The inspected file itself, so a takeover cannot remove a replacement
+    // that another process created after this one looked (an unreadable lock
+    // has no nonce to tell them apart).
+    const inspected = await stat(path, { bigint: true }).catch(() => undefined);
     if (attempt > 0 || !(await lockIsStale(root, path, holder))) {
       throw new Error(`a daemon is already running or starting for ${root}${holder ? ` (pid ${holder.pid})` : ""}`);
     }
-    if (!(await takeOverLock(path, holder))) {
+    if (!(await takeOverLock(path, holder, inspected))) {
       throw new Error(`a daemon is already running or starting for ${root}`);
     }
   }
@@ -138,8 +143,9 @@ export async function acquireDaemonLock(root: string): Promise<DaemonLock> {
  * moves it aside; if what it moved is not the inspected holder (another
  * process already replaced it with a fresh lock), it puts that lock back
  * (`link` fails if a new lock appeared meanwhile) and reports a live holder.
+ * Exported for tests.
  */
-async function takeOverLock(path: string, holder: LockContents | undefined): Promise<boolean> {
+export async function takeOverLock(path: string, holder: LockContents | undefined, inspected: BigIntStats | undefined): Promise<boolean> {
   const aside = `${path}.${randomBytes(6).toString("hex")}.stale`;
   try {
     await rename(path, aside);
@@ -149,7 +155,11 @@ async function takeOverLock(path: string, holder: LockContents | undefined): Pro
     throw error;
   }
   const moved = await readLock(aside);
-  if (holder === undefined || moved?.nonce === holder.nonce) {
+  const movedStat = await stat(aside, { bigint: true }).catch(() => undefined);
+  // Rename keeps the file's identity: same inode and modification time.
+  const sameFile =
+    inspected !== undefined && movedStat !== undefined && movedStat.ino === inspected.ino && movedStat.dev === inspected.dev && movedStat.mtimeNs === inspected.mtimeNs;
+  if (holder === undefined ? sameFile : moved?.nonce === holder.nonce) {
     await rm(aside, { force: true });
     return true;
   }

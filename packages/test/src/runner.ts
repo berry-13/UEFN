@@ -158,7 +158,10 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
 
     const repeat = options.debug ? 1 : Math.max(1, options.repeat ?? 1);
     const retries = repeat > 1 || options.debug ? 0 : (options.retries ?? engine.config.tests.retries);
+    /** Set when a cleanup left a match running: nothing more can run cleanly. */
+    let halted: string | undefined;
     for (const def of selected) {
+      if (halted) break;
       if (def.skip) {
         const result: TestResult = {
           id: def.id, name: def.name, file: relative(engine.root, def.file), status: "skipped",
@@ -177,10 +180,12 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
           if (attempt.status !== "passed") {
             attempt.artifactDir = await writeFailureArtifacts(engine, artifactRoot, def, attempt, run.fromIndex, repeat > 1);
           }
-          if (attempt.status === "passed") break;
+          if (run.cleanupFailed) halted = `${def.id}: ${attempt.error ?? "cleanup failed"}`;
+          if (attempt.status === "passed" || halted) break;
         }
         attempts.push(attempt!);
         emit({ kind: "attempt", test: def, attempt: attempt!, repeat });
+        if (halted) break;
       }
       const passed = attempts.filter((a) => a.status === "passed").length;
       const result: TestResult = {
@@ -198,6 +203,10 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       emit({ kind: "test", result });
     }
     summary.status = summary.tests.every((t) => t.status === "passed" || t.status === "skipped") ? "passed" : "failed";
+    if (halted) {
+      summary.status = "failed";
+      summary.error = `stopped after a cleanup left the match running (${halted}); remaining attempts and tests were not run`;
+    }
   } catch (error) {
     summary.status = "error";
     summary.error = (error as Error).message;
@@ -254,7 +263,7 @@ async function runAttempt(
   stage: (s: RunStage, test?: string, iteration?: number) => void,
   updateSnapshots: boolean,
   debug?: DebugHooks,
-): Promise<{ attempt: TestAttempt; fromIndex: number }> {
+): Promise<{ attempt: TestAttempt; fromIndex: number; cleanupFailed: boolean }> {
   const startedAt = engine.now();
   const timeoutMs = parseDuration(def.options.timeout ?? engine.config.tests.timeout);
   let currentStage: RunStage = "INITIALIZING";
@@ -345,11 +354,12 @@ async function runAttempt(
   const eventCounts = engine.events.countsByType(ctx.startIndex);
 
   enter("CLEANUP");
+  let cleanup: string | undefined;
   if (engine.state.phase === "playing" && engine.supportsCommand("end_game")) {
     // Wait for the match to end, as GameFixture.end() does, so a repeat or
     // retry does not start while this match (and its scenario device) winds down.
     const from = engine.events.mark();
-    const cleanup = await engine
+    cleanup = await engine
       .command({ type: "end_game" })
       .then(async () => {
         if (engine.state.phase === "playing") await engine.waitForEvent({ type: "game.ended" }, { timeoutMs: ctx.expectTimeout, fromIndex: from });
@@ -358,12 +368,15 @@ async function runAttempt(
         () => undefined,
         (e: unknown) => (e as Error).message,
       );
-    // A match left running would leak into the next attempt or test, so a
-    // failed cleanup fails the attempt instead of passing silently.
-    if (cleanup !== undefined && status === "passed") {
-      status = "error";
-      error = `cleanup could not end the match: ${cleanup}`;
-      failedStage = "CLEANUP";
+    // A match left running would leak into the next attempt or test: the
+    // attempt fails (whatever happened before) and the run stops after it.
+    if (cleanup !== undefined) {
+      const message = `cleanup could not end the match: ${cleanup}`;
+      if (status === "passed") {
+        status = "error";
+        failedStage = "CLEANUP";
+      }
+      error = error ? `${error}; ${message}` : message;
     }
   }
 
@@ -379,7 +392,7 @@ async function runAttempt(
     ...(failedStage ? { failedStage } : {}),
     eventCounts,
   };
-  return { attempt, fromIndex: ctx.startIndex };
+  return { attempt, fromIndex: ctx.startIndex, cleanupFailed: cleanup !== undefined };
 }
 
 async function writeArtifact(dir: string, name: string, data: unknown): Promise<void> {

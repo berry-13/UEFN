@@ -158,3 +158,18 @@ test("a device locked before the test states its expectation is checked when it 
   assert.match((await pending).error!, /stale \(plan old, the test generates new\)/);
   assert.ok(Date.now() - started < 1000);
 });
+
+test("two copies of the same device in one match are a conflict", async () => {
+  const t = new ScenarioTransport(inner, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 1 }));
+  t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 1 }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 0, action: "spawn_player", player: "player1", arg: "" }));
+  assert.match((await t.command({ type: "spawn_player", player: "player1" })).error!, /two copies of the scenario device for 's'/);
+  // A restart ends the match first, so the same device starting again is fine.
+  t.observe(ev("game.ended", {}));
+  t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 1 }));
+  t.observe(ev("game.ended", {}));
+  t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 1 }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 0, action: "spawn_player", player: "player1", arg: "" }));
+  assert.deepEqual(await t.command({ type: "spawn_player", player: "player1" }), { ok: true });
+});

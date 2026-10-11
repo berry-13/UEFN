@@ -314,3 +314,32 @@ test("an attempt whose cleanup cannot end the match does not pass", async () => 
     await engine.close();
   }
 });
+
+test("a cleanup that leaves the match running stops retries and the rest of the run", async () => {
+  const failing = YAML_TEST.replace("score: 50", "score: 999");
+  const dir = await project(CONFIG(), { "a.test.yaml": failing, "b.test.yaml": YAML_TEST.replace("name: Capture A", "name: Capture B") });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const real = engine.adapter.transport.bind(engine.adapter);
+  engine.adapter.transport = () => {
+    const inner = real();
+    return {
+      ...inner,
+      name: inner.name,
+      start: () => inner.start(),
+      stop: () => inner.stop(),
+      receive: () => inner.receive(),
+      supportedCommands: () => inner.supportedCommands(),
+      command: async (command) => (command.type === "end_game" ? { ok: false, error: "StopGame refused" } : inner.command(command)),
+    };
+  };
+  try {
+    const summary = await runTests(engine, { skipBuild: true, retries: 2 });
+    assert.equal(summary.status, "failed");
+    // The failed attempt is not retried and the next test does not run.
+    assert.deepEqual(summary.tests.map((t) => [t.id, t.attempts.length]), [["capture-a", 1]]);
+    assert.match(summary.tests[0]!.attempts[0]!.error ?? "", /; cleanup could not end the match: StopGame refused/);
+    assert.match(summary.error ?? "", /stopped after a cleanup left the match running/);
+  } finally {
+    await engine.close();
+  }
+});

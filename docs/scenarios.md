@@ -74,7 +74,10 @@ player moved.
   100 → 75 asserted) and step reporting. `Damage` has no effect while the
   player is still in the island's sky-spawn state: land the player first
   (teleport to the ground, then `wait`), and assert the resulting health
-  rather than only that a report arrived. `eliminate` verified live too
+  rather than only that a report arrived. After a match (re)start players
+  can stay immune for several seconds: `eliminate` then fails with "survived
+  the elimination" rather than confirming; on 42.30 a 10 s wait after
+  landing was reliable, 5 s was not. `eliminate` verified live too
   (health 0, `alive: false`).
 - Steps run in order on the device's own clock. The host checks each report
   in order and fails on a mismatch (`was 'damage_player' in game but the

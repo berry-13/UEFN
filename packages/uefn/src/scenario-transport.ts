@@ -116,8 +116,12 @@ export class ScenarioTransport implements RuntimeTransport {
         this.conflict = `scenario devices for '${this.locked.id || "(untagged)"}' and '${id || "(untagged)"}' both run in this match; place one scenario device per test`;
       } else if (this.locked && this.locked.plan !== plan) {
         this.conflict = `two builds of scenario '${id}' (plans ${this.locked.plan ?? "?"} and ${plan ?? "?"}) run in this match; remove the stale device and regenerate it with 'uefn scenario'`;
+      } else if (this.locked) {
+        // A match restart ends the match first (game.ended releases the
+        // lock), so a second start within one match is a second copy.
+        this.conflict = `two copies of the scenario device for '${id || "(untagged)"}' run in this match and would both perform every step; place exactly one`;
       } else {
-        // First start in this match, or a restart of the same device.
+        // First start in this match.
         this.locked = { id, ...(plan !== undefined ? { plan } : {}) };
         this.reports = [];
         this.cursor = 0;

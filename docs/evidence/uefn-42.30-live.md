@@ -190,3 +190,11 @@ poc.players      5    1     1    1    1
 The same build compiled the runtime's `Hello` with its sequence offset
 (`H|{SeqStart}`); the POC device's and the scenario device's hellos both
 reached DevTools as `session.ready`.
+
+### Immunity after a match restart (2026-10-11)
+
+With fresh sessions now restarting UEFN's auto-started match, `eliminate`
+5 s after landing the player failed in 2 of 3 runs: the device reported
+`player 1 survived the elimination` (health stayed 100) instead of
+confirming a step that did nothing. With a 10 s wait the same test passed
+3 of 3.

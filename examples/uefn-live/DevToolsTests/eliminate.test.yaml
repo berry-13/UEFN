@@ -6,7 +6,8 @@ setup:
   - spawn_player: { id: player1 }
 steps:
   - teleport: { player: player1, location: Ground }
-  - wait: 5s
+  # Players are immune to damage for a while after the match (re)starts.
+  - wait: 10s
   - eliminate: { player: player1 }
   - wait: 1s
   - wait: 12s

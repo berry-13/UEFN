@@ -499,3 +499,24 @@ test("releasing a lock leaves an unreadable replacement in place", async () => {
   await lock.release();
   assert.equal(await readFile(daemonLockPath(dir), "utf8"), "");
 });
+
+test("taking over an unreadable lock never removes a replacement created meanwhile", async () => {
+  const { takeOverLock } = await import("../src/info.ts");
+  const { rename, stat: statFile } = await import("node:fs/promises");
+  const dir = await mkdtemp(join(tmpdir(), "uefn-devtools-lock-"));
+  await mkdir(join(dir, ".devtools"), { recursive: true });
+  const path = daemonLockPath(dir);
+  // This process inspected a half-written lock (no nonce to compare)...
+  await writeFile(path, "{");
+  const inspected = await statFile(path, { bigint: true });
+  // ...then another process recovered it and wrote its own lock.
+  const fresh = JSON.stringify({ pid: process.pid, nonce: "winner" }) + "\n";
+  await writeFile(`${path}.tmp`, fresh);
+  await rename(`${path}.tmp`, path);
+  assert.equal(await takeOverLock(path, undefined, inspected), false);
+  assert.equal(await readFile(path, "utf8"), fresh);
+  // The inspected file itself is taken over.
+  await writeFile(path, "{");
+  assert.equal(await takeOverLock(path, undefined, await statFile(path, { bigint: true })), true);
+  await assert.rejects(statFile(path));
+});
