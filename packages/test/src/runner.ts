@@ -5,6 +5,7 @@ import type { RunStage, RunSummary, TestAttempt, TestResult } from "@uefn-devtoo
 import { parseDuration } from "@uefn-devtools/protocol";
 import { TestAbortedError, TestContext, globalState, type TestDefinition } from "./context.ts";
 import { correlateFailures } from "./correlate.ts";
+import { DEBUG_ABORT_MESSAGE, type DebugHooks } from "./debug.ts";
 import { filterTests, findTestFiles, loadTests } from "./discover.ts";
 import { AssertionError } from "./expect.ts";
 import { createFixtures } from "./fixtures.ts";
@@ -34,6 +35,13 @@ export interface RunOptions {
   /** Restrict to these files (absolute or relative to project root). */
   files?: string[];
   onEvent?: (event: RunnerEvent) => void;
+  /** Ask the adapter for a visible game window (a hint; see StartSessionOptions). */
+  headed?: boolean;
+  /**
+   * Step debugging: pauses before every step and on failure. Forces repeat 1
+   * and retries 0; paused time does not count against the test timeout.
+   */
+  debug?: DebugHooks;
 }
 
 class StageError extends Error {
@@ -103,7 +111,7 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
 
     stage("STARTING_SESSION");
     const priorSession = engine.session?.status === "connected" || engine.session?.status === "playing";
-    const session = await engine.startSession().catch((e: Error) => {
+    const session = await engine.startSession(options.headed ? { headed: true } : {}).catch((e: Error) => {
       throw new StageError("STARTING_SESSION", e.message);
     });
     summary.sessionId = session.id;
@@ -114,8 +122,8 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       throw new StageError("WAITING_FOR_RUNTIME", `${e.message}. Is the DevTools Verse runtime installed and emitting a hello line?`);
     });
 
-    const repeat = Math.max(1, options.repeat ?? 1);
-    const retries = repeat > 1 ? 0 : (options.retries ?? engine.config.tests.retries);
+    const repeat = options.debug ? 1 : Math.max(1, options.repeat ?? 1);
+    const retries = repeat > 1 || options.debug ? 0 : (options.retries ?? engine.config.tests.retries);
     for (const def of selected) {
       if (def.skip) {
         const result: TestResult = {
@@ -130,7 +138,7 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       for (let iteration = 0; iteration < repeat; iteration++) {
         let attempt: TestAttempt | undefined;
         for (let retry = 0; retry <= retries; retry++) {
-          const run = await runAttempt(engine, def, iteration, (options.seed ?? 1) + iteration, stage, options.updateSnapshots === true);
+          const run = await runAttempt(engine, def, iteration, (options.seed ?? 1) + iteration, stage, options.updateSnapshots === true, options.debug);
           attempt = run.attempt;
           if (attempt.status !== "passed") {
             attempt.artifactDir = await writeFailureArtifacts(engine, artifactRoot, def, attempt, run.fromIndex, repeat > 1);
@@ -189,6 +197,7 @@ async function runAttempt(
   seed: number,
   stage: (s: RunStage, test?: string, iteration?: number) => void,
   updateSnapshots: boolean,
+  debug?: DebugHooks,
 ): Promise<{ attempt: TestAttempt; fromIndex: number }> {
   const startedAt = engine.now();
   const timeoutMs = parseDuration(def.options.timeout ?? engine.config.tests.timeout);
@@ -211,6 +220,11 @@ async function runAttempt(
     { testId: def.id, file: def.file, update: updateSnapshots },
   );
   const fixtures = createFixtures(ctx);
+  const debugTest = { id: def.id, name: def.name, file: relative(engine.root, def.file), iteration };
+  if (debug) {
+    ctx.debug = debug;
+    ctx.debugTest = debugTest;
+  }
 
   let status: TestAttempt["status"] = "passed";
   let error: string | undefined;
@@ -220,15 +234,24 @@ async function runAttempt(
     enter(s);
     if (!body) return;
     let cancel = () => {};
+    let expire: (error: Error) => void = () => {};
     const deadline = new Promise<never>((_, reject) => {
-      cancel = engine.schedule(timeoutMs - (engine.now() - startedAt), () =>
-        reject(new TestAbortedError(`test timed out after ${timeoutMs}ms`)),
-      );
+      expire = reject;
     });
+    // Budget is session time minus time paused in the debugger; the debugger
+    // disarms the timer while paused and re-arms it with what is left.
+    const arm = () => {
+      cancel = engine.schedule(timeoutMs - (engine.now() - startedAt - ctx.pausedMs), () =>
+        expire(new TestAbortedError(`test timed out after ${timeoutMs}ms`)),
+      );
+    };
+    arm();
+    ctx.deadline = { suspend: () => cancel(), resume: arm };
     try {
       await Promise.race([globalState.storage.run(ctx, async () => body()), deadline]);
     } finally {
       cancel();
+      delete ctx.deadline;
     }
   };
 
@@ -246,6 +269,19 @@ async function runAttempt(
     error = err.message;
     failedStage = currentStage;
     ctx.aborted = err.message;
+    if (debug?.onFailure && err.message !== DEBUG_ABORT_MESSAGE) {
+      const onFailure = debug.onFailure.bind(debug);
+      await ctx.paused(() =>
+        onFailure({
+          test: debugTest,
+          stage: currentStage,
+          error: err.message,
+          ...(err instanceof AssertionError ? { expected: err.expected, received: err.received } : {}),
+          engine,
+          startIndex: ctx.startIndex,
+        }),
+      );
+    }
   }
 
   enter("COLLECTING");
@@ -260,7 +296,7 @@ async function runAttempt(
   const attempt: TestAttempt = {
     iteration,
     status,
-    durationMs: engine.now() - startedAt,
+    durationMs: engine.now() - startedAt - ctx.pausedMs,
     seed,
     steps: ctx.steps,
     assertions: ctx.assertions,

@@ -32,3 +32,12 @@ export { generateYamlTest, recordedState, type GenerateOptions, type GeneratedTe
 export { loadStepScript } from "./script.ts";
 export { TestContext } from "./context.ts";
 export { createFixtures } from "./fixtures.ts";
+export {
+  DEBUG_ABORT_MESSAGE,
+  type DebugAction,
+  type DebugHooks,
+  type DebugStepInfo,
+  type DebugFailureInfo,
+  type DebugTestInfo,
+} from "./debug.ts";
+export { renderFrame, renderStateLine, progressBar, describeEvent, recentEvents, type FrameInput } from "./headed.ts";

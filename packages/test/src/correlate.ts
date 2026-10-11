@@ -11,7 +11,8 @@ export function correlateFailures(attempts: readonly TestAttempt[]): Correlation
   if (failing.length === 0 || passing.length === 0) return [];
 
   const types = new Set<string>();
-  for (const a of attempts) for (const t of Object.keys(a.eventCounts)) types.add(t);
+  // perf.* is telemetry about the run, not gameplay; its counts track duration.
+  for (const a of attempts) for (const t of Object.keys(a.eventCounts)) if (!t.startsWith("perf.")) types.add(t);
 
   const out: (Correlation & { strength: number })[] = [];
   for (const type of [...types].sort()) {

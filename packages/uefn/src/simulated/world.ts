@@ -41,6 +41,9 @@ export class SimulatedWorld {
   private teamScores = new Map<number, number>();
   private playing = false;
   private rng: () => number;
+  /** Separate stream for synthetic perf values, so profiling never shifts fault injection. */
+  private perfRng: () => number;
+  private ticks = 0;
   private traceCounter = 0;
 
   constructor(
@@ -48,6 +51,7 @@ export class SimulatedWorld {
     private readonly emit: EmitFn,
   ) {
     this.rng = createRng(config.seed);
+    this.perfRng = createRng(perfSeed(config.seed));
     this.reset();
   }
 
@@ -60,6 +64,7 @@ export class SimulatedWorld {
     this.devices.clear();
     this.teamScores.clear();
     this.playing = false;
+    this.ticks = 0;
     for (const config of this.config.devices) {
       this.devices.set(config.id, { config, enabled: config.enabled, progress: 0, state: "Neutral" });
     }
@@ -68,6 +73,7 @@ export class SimulatedWorld {
 
   seed(seed: number): void {
     this.rng = createRng(seed);
+    this.perfRng = createRng(perfSeed(seed));
   }
 
   handle(command: RuntimeCommand): CommandResult {
@@ -246,10 +252,50 @@ export class SimulatedWorld {
 
   /** Advances the simulation by `dt` game milliseconds. */
   tick(dt: number): void {
-    if (!this.playing) return;
-    for (const device of this.devices.values()) {
-      if (device.enabled) this.tickDevice(device, dt);
+    this.ticks += 1;
+    if (this.playing) {
+      for (const device of this.devices.values()) {
+        if (device.enabled) this.tickDevice(device, dt);
+      }
     }
+    const profiling = this.config.profiling;
+    if (profiling.enabled && this.ticks % profiling.sample_every_ticks === 0) this.emitPerfSample();
+  }
+
+  /**
+   * Synthetic metrics: a cost model over world size plus seeded jitter.
+   * They exercise the profiler pipeline; they are not measurements.
+   */
+  private emitPerfSample(): void {
+    const alive = [...this.players.values()].filter((p) => p.alive);
+    const occupancy = alive.reduce((n, p) => n + p.areas.size, 0);
+    const entities = this.players.size + this.devices.size;
+    const tickMs = 0.05 + 0.012 * entities + 0.02 * occupancy + this.perfRng() * 0.03;
+    this.emit({
+      type: EventTypes.PerfSample,
+      source: { type: "system", id: "profiler" },
+      payload: {
+        scope: "world",
+        frame_ms: round3(16 + tickMs * 4 + this.perfRng() * 2),
+        tick_ms: round3(tickMs),
+        entities,
+        players: alive.length,
+        devices: this.devices.size,
+        memory_mb: round3(256 + entities * 1.5 + occupancy * 0.25 + this.perfRng() * 0.5),
+      },
+    });
+  }
+
+  /** Scoped timing of a handler, emitted after the work it measures (timestamp = end). */
+  private emitSpan(name: string, parent: string, durationMs: number, extra: Record<string, unknown>, traceId?: string): void {
+    if (!this.config.profiling.enabled) return;
+    this.emit({
+      type: EventTypes.PerfSpan,
+      source: { type: "system", id: "profiler" },
+      parentEventId: parent,
+      ...(traceId ? { traceId } : {}),
+      payload: { name, duration_ms: round3(durationMs), ...extra },
+    });
   }
 
   private occupants(deviceId: string): SimPlayer[] {
@@ -317,13 +363,14 @@ export class SimulatedWorld {
       // Injected fault: a second scoring path fires for the same capture.
       this.award(team, device.config.score, id, completed, device.traceId);
     }
+    this.emitSpan("capture_handler", completed, 0.08 + 0.04 * inside.length + this.perfRng() * 0.05, { device: id }, device.traceId);
   }
 
   private award(team: number, amount: number, device: string, parent: string, traceId?: string): void {
     const previous = this.teamScores.get(team) ?? 0;
     const current = previous + amount;
     this.teamScores.set(team, current);
-    this.emit({
+    const changed = this.emit({
       type: EventTypes.ScoreChanged,
       source: { type: "device", id: device },
       target: { type: "team", id: String(team) },
@@ -331,6 +378,7 @@ export class SimulatedWorld {
       ...(traceId ? { traceId } : {}),
       payload: { team, previous, current, delta: amount },
     });
+    this.emitSpan("score_handler", changed, 0.02 + this.perfRng() * 0.02, { team }, traceId);
   }
 
   private setState(device: SimDevice, state: SimDevice["state"]): void {
@@ -359,4 +407,12 @@ export class SimulatedWorld {
     this.traceCounter += 1;
     return `tr_${this.traceCounter.toString(16).padStart(4, "0")}`;
   }
+}
+
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
+function perfSeed(seed: number): number {
+  return (seed ^ 0x5bd1e995) >>> 0;
 }

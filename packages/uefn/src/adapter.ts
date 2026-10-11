@@ -45,6 +45,16 @@ export interface AdapterSession {
   reused: boolean;
 }
 
+export interface StartSessionOptions {
+  /**
+   * Ask for a visible game window (`uefn test --headed`). A hint: the
+   * simulated adapter ignores it (the CLI renders the state instead) and the
+   * mcp adapter forwards it to the start_session tool, whose support for it
+   * is unverified (docs/debugging.md).
+   */
+  headed?: boolean;
+}
+
 /**
  * Isolates Epic-specific integration from DevTools logic (spec §50). Every
  * operation the engine needs from UEFN goes through here.
@@ -56,7 +66,7 @@ export interface UEFNAdapter {
   disconnect(): Promise<void>;
   getProjectInfo(): Promise<Record<string, unknown>>;
   compile(): Promise<CompileResult>;
-  startSession(): Promise<AdapterSession>;
+  startSession(options?: StartSessionOptions): Promise<AdapterSession>;
   stopSession(): Promise<void>;
   getSessionStatus(): Promise<SessionStatus | "none">;
   getDevices(): Promise<DeviceInfo[]>;

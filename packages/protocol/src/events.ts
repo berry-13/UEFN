@@ -58,5 +58,9 @@ export const EventTypes = {
   ScoreChanged: "score.changed",
   ProbeUpdated: "probe.updated",
   Log: "log",
+  // Profiling (docs/profiler.md). `perf.sample` carries periodic runtime
+  // metrics; `perf.span` is a scoped timing whose timestamp is its END.
+  PerfSample: "perf.sample",
+  PerfSpan: "perf.span",
 } as const;
 export type CanonicalEventType = (typeof EventTypes)[keyof typeof EventTypes];

@@ -182,6 +182,10 @@ function assertionsFor(recording: Recording, options: Required<GenerateOptions>)
   return out;
 }
 
+function isArrangement(s: Step): boolean {
+  return s === "start_game" || (typeof s === "object" && "spawn_player" in s);
+}
+
 /**
  * Turns a recording into a YAML test: observed actions become steps (with
  * rounded waits between them), the derived end state and key outcome events
@@ -193,8 +197,12 @@ export function generateYamlTest(recording: Recording, opts: GenerateOptions = {
 
   const steps: Step[] = [];
   let previous: number | undefined;
+  // Leading start_game and spawns run back to back: a gap between them is
+  // timing noise, and a wait there would cut the setup block short.
+  let arranging = true;
   for (const item of items) {
-    if (options.waits && previous !== undefined) {
+    arranging &&= isArrangement(item.step);
+    if (options.waits && previous !== undefined && !arranging) {
       const gap = item.timestamp - previous;
       // A wait_for covers the gap itself; plain waits are rounded.
       if (!item.marker && gap >= options.minWait) {
@@ -212,11 +220,7 @@ export function generateYamlTest(recording: Recording, opts: GenerateOptions = {
 
   // Leading start_game and spawns are the arrangement; the rest is the scenario.
   let split = 0;
-  while (split < steps.length) {
-    const s = steps[split]!;
-    if (s === "start_game" || (typeof s === "object" && "spawn_player" in s)) split++;
-    else break;
-  }
+  while (split < steps.length && isArrangement(steps[split]!)) split++;
 
   const test: YamlTest = YamlTestSchema.parse({
     name: options.name,

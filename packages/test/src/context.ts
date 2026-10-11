@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { AssertionResult, StepResult } from "@uefn-devtools/protocol";
 import type { DevToolsEngine } from "@uefn-devtools/core";
 import type { SnapshotEnv } from "./snapshot.ts";
+import { DEBUG_ABORT_MESSAGE, type DebugHooks, type DebugTestInfo } from "./debug.ts";
 
 export interface TestOptions {
   /** Session-clock timeout for the whole test (`30s`, `500ms` or milliseconds). */
@@ -44,6 +45,15 @@ export class TestContext {
   /** Unnamed `toMatchSnapshot()` calls are numbered per attempt. */
   snapshotCounter = 0;
 
+  // Debug support, set by the runner when RunOptions.debug is given.
+  debug?: DebugHooks;
+  debugTest?: DebugTestInfo;
+  /** Session-clock time spent paused in the debugger; excluded from the test timeout. */
+  pausedMs = 0;
+  /** The running phase's timeout, disarmed while paused. */
+  deadline?: { suspend(): void; resume(): void };
+  private stepIndex = 0;
+
   constructor(
     readonly engine: DevToolsEngine,
     /** Event-store index at which this attempt began. */
@@ -59,6 +69,15 @@ export class TestContext {
 
   async step<T>(description: string, fn: () => Promise<T>): Promise<T> {
     this.ensureActive();
+    if (this.debug && this.debugTest) {
+      const debug = this.debug;
+      const info = { test: this.debugTest, index: this.stepIndex++, description, engine: this.engine, startIndex: this.startIndex };
+      const action = await this.paused(() => debug.beforeStep(info));
+      if (action === "abort") {
+        this.aborted = DEBUG_ABORT_MESSAGE;
+        throw new TestAbortedError(DEBUG_ABORT_MESSAGE);
+      }
+    }
     const started = this.engine.now();
     try {
       const value = await fn();
@@ -73,6 +92,24 @@ export class TestContext {
         error: (error as Error).message,
       });
       throw error;
+    }
+  }
+
+  /**
+   * Runs `fn` with the test paused: the timeout is disarmed and, when the
+   * adapter clock supports it, session time is frozen (docs/debugging.md).
+   */
+  async paused<T>(fn: () => Promise<T> | T): Promise<T> {
+    const clock = this.engine.adapter.clock;
+    this.deadline?.suspend();
+    const started = this.engine.now();
+    clock.pause?.();
+    try {
+      return await fn();
+    } finally {
+      clock.resume?.();
+      this.pausedMs += this.engine.now() - started;
+      this.deadline?.resume();
     }
   }
 

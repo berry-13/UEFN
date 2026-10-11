@@ -3,7 +3,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CompileResult, DeviceInfo, Diagnostic, SessionStatus } from "@uefn-devtools/protocol";
 import { DevToolsConfig } from "@uefn-devtools/protocol";
-import type { AdapterSession, Capability, CapabilityReport, RuntimeTransport, UEFNAdapter } from "./adapter.ts";
+import type {
+  AdapterSession,
+  Capability,
+  CapabilityReport,
+  RuntimeTransport,
+  StartSessionOptions,
+  UEFNAdapter,
+} from "./adapter.ts";
 import { RealClock, type Clock } from "./clock.ts";
 import { LogFileTransport } from "./log-transport.ts";
 
@@ -100,12 +107,13 @@ export class McpUefnAdapter implements UEFNAdapter {
     return { success, durationMs: performance.now() - started, diagnostics, raw: out.text };
   }
 
-  async startSession(): Promise<AdapterSession> {
+  async startSession(options: StartSessionOptions = {}): Promise<AdapterSession> {
     if (this.session) return { id: this.session.id, reused: true };
     const status = await this.getSessionStatus().catch(() => "none" as const);
     const reused = status === "connected" || status === "playing";
     if (!reused) {
-      const out = await this.call("start_session");
+      // `headed` is forwarded as-is; whether the UEFN tool honours it is unverified.
+      const out = await this.call("start_session", options.headed ? { headed: true } : {});
       if (out.isError) throw new Error(`UEFN refused to start a session: ${out.text}`);
     }
     if (!this.options.logPath) {
