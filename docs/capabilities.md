@@ -96,13 +96,14 @@ classified as:
 The log transport only carries data **out** of the session. It cannot send
 commands in. Until an inbound channel exists, steps such as `teleport` or
 `eliminate` fail with an explicit `unsupported` error rather than a silent
-skip. Any one of these options could close the gap. All are unverified:
+skip. These are the options for closing the gap; option 2 is built and
+verified live:
 
 1. **Official API.** Partly closed: UEFN 42.30 ships `StartGame` / `StopGame`
-   session tools (binary evidence, unverified live), which DevTools sends when
+   session tools (verified live), which DevTools sends when
    `mcp.tools.start_game` / `end_game` are mapped. No tool acts on players in
    the running match, so player actions still need option 2 or 3.
-2. **Scenario device (INSTRUMENTED, built: `uefn scenario`, [scenarios](scenarios.md); teleport, damage and eliminate verified live).** DevTools generates a Verse device from
+2. **Scenario device (INSTRUMENTED, built: `uefn scenario`, [scenarios](scenarios.md); teleport, damage, eliminate and acting after a respawn verified live).** DevTools generates a Verse device from
    the test definition into `/DevTools/generated/`. When the game starts, the
    device drives the developer's own player (`fort_character.TeleportTo`,
    damage, etc.) through the steps. Selecting a test means recompiling with

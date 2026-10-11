@@ -170,3 +170,23 @@ connect-time tool check now accepts.
 - **Lethal damage.** After a respawn, the landing alone can eliminate the
   player; the following `damage` step then reads health 0 and now reports
   `player.eliminated`. The live test asserts only outcomes that always hold.
+
+### Verse profiling helpers (2026-10-11)
+
+The POC device wraps each one-second tick in `ProfileBegin` /
+`ProfileEnd("poc.tick", ...)` and emits `PerfSample("poc", players)`
+(`examples/uefn-live`). `uefn profile perf-live` passed and reported:
+
+```
+Spans (ms)
+name      count     total      mean       p50       p95       max
+poc.tick      5  5009.229  1001.846  1001.844  1001.904  1001.904
+
+Samples
+metric       count  min  mean  p95  max
+poc.players      5    1     1    1    1
+```
+
+The same build compiled the runtime's `Hello` with its sequence offset
+(`H|{SeqStart}`); the POC device's and the scenario device's hellos both
+reached DevTools as `session.ready`.

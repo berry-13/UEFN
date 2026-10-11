@@ -44,14 +44,15 @@ Duration: 0.83s
 | VS Code extension: Test Explorer, Verse diagnostics, live events, YAML schema | working (verified in a VS Code 1.100 extension host) |
 | Recorder (`uefn record`): observed session to a YAML test | working (scripted on the simulator; interactive needs real UEFN) |
 | `uefn doctor` and `uefn deps` (Verse dependency graph, test impact) | working |
-| Profiler (`uefn profile`, Chrome trace export, `uefn_profile` MCP tool) | working on the simulator; Verse helpers unverified |
+| Profiler (`uefn profile`, Chrome trace export, `uefn_profile` MCP tool) | working; Verse span and sample helpers verified in a live UEFN 42.30 session |
 | GitHub: JUnit and Actions reporters, job summary, `init --github`, `ci comment` | working |
 | CLI: `status`, `doctor`, `capabilities`, `compile`, `list`, `test`, `profile`, `trace`, `deps`, `record`, `history`, `daemon`, `ui`, `mcp`, `init`, `ci` | working |
 | MCP server (21 tools, permission modes, audit log) | working |
 | Simulated adapter: deterministic capture-point world with fault injection and perf samples | working |
 | Log transport and compile-diagnostics parser | tested against real UEFN 41.10 editor logs; game start/end derived from the log |
 | UEFN MCP adapter (compile, sessions, match start/stop) | POC-001 passes against a live UEFN 42.30 session ([evidence](docs/evidence/uefn-42.30-live.md)) |
-| Verse runtime emitter (`runtime/verse`) | works in a live UEFN 42.30 session (`Hello` and probes reach the log) |
+| Verse runtime emitter (`runtime/verse`) | works in a live UEFN 42.30 session (`Hello`, probes, spans and samples reach the log) |
+| Scenario devices (`uefn scenario`): player actions in a real match | teleport, damage, eliminate and acting after a respawn verified live on UEFN 42.30, in fresh and reused sessions |
 
 Everything runs today against the **simulated adapter**. That covers
 developing the engine, test API and agent loop. The same tests run

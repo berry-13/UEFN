@@ -20,8 +20,8 @@ Agents get the same profile from the MCP tool `uefn_profile`
 | Session duration, throughput, hot event types | DERIVED from event timestamps | Works with any transport |
 | Causal latency | DERIVED from `parentEventId` links | Works with any transport that emits parent links |
 | Run stage timings | DERIVED from runner stage transitions | Works with any adapter |
-| Spans (`perf.span`) | INSTRUMENTED: `ProfileBegin` / `ProfileEnd` / `ProfileSpan` in `runtime/verse/devtools.verse` | **Unverified** in UEFN, like the rest of that file |
-| Samples (`perf.sample`) | INSTRUMENTED: `PerfSample` in `devtools.verse` | **Unverified**. Verse exposes no memory or engine frame-cost API that we know of, so `memory_mb` has no real source yet |
+| Spans (`perf.span`) | INSTRUMENTED: `ProfileBegin` / `ProfileEnd` / `ProfileSpan` in `runtime/verse/devtools.verse` | Verified live on UEFN 42.30: a span around `Sleep(1.0)` reads 1001.8 ms ([evidence](evidence/uefn-42.30-live.md)) |
+| Samples (`perf.sample`) | INSTRUMENTED: `PerfSample` in `devtools.verse` | Verified live on UEFN 42.30 (player count). Verse exposes no memory or engine frame-cost API that we know of, so `memory_mb` has no real source yet |
 
 **The simulator's perf numbers are synthetic.** The simulated adapter emits
 `perf.sample` and `perf.span` events from a cost model (world size plus seeded

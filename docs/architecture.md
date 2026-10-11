@@ -80,14 +80,11 @@
 ## Open
 
 Every feature on the original roadmap is built and runs against the
-simulated adapter. What is left needs a Windows machine with UEFN and
-Fortnite, so none of it can be checked from this repository alone:
+simulated adapter. Against a live UEFN 42.30 session, POC-001, player
+actions through scenario devices (option 2 in
+[capabilities](capabilities.md#the-command-gap)) and the Verse profiling
+helpers all pass ([evidence](evidence/uefn-42.30-live.md)). What is left
+needs a person at the keyboard or a product decision:
 
-- Player actions in a running match (teleport, damage, eliminate): UEFN's
-  MCP tools start and stop matches but none acts on players, so the scenario
-  device (option 2 in [capabilities](capabilities.md#the-command-gap)) is
-  still needed. POC-001 itself passes live
-  ([evidence](evidence/uefn-42.30-live.md)).
-- Whether the Verse profiling helpers produce useful spans.
 - Interactive `uefn record` with a human player.
 - A native desktop shell, if a browser app window turns out not to be enough.
