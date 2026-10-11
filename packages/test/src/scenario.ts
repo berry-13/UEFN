@@ -135,6 +135,8 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
   const body: string[] = [];
   let lastLifecycle: "start_game" | "end_game" | undefined;
   let sawStart = false;
+  /** A `wait_for` the device cannot mirror, until the next player action would depend on it. */
+  let waitFor: string | undefined;
 
   const slot = (id: string | number): { name: string; index: number } => {
     const name = playerId(id);
@@ -281,6 +283,13 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
       // match, the device's reports can predate the test and its observed state.
       throw new ScenarioError(`test '${options.id}' must start_game before its first player action, so the device runs inside the test`);
     }
+    if (isAction && waitFor !== undefined) {
+      // The device would run the action without waiting, while the host sends it
+      // after the event and accepts the report the device already made.
+      throw new ScenarioError(
+        `wait_for ${waitFor} before a player action is not supported: the device cannot wait for DevTools events; use a 'wait' instead`,
+      );
+    }
     if ("spawn_player" in s) {
       const p = slot(s.spawn_player.id);
       if (s.spawn_player.team !== undefined) warnings.push(`spawn_player ${p.name}: team ${s.spawn_player.team} is not enforced; players join by island settings`);
@@ -322,7 +331,8 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
       timing.push(`wait ${seconds} before ${plan.length}`);
       body.push(`        Sleep(${verseFloat(seconds)})`);
     } else if ("wait_for" in s) {
-      warnings.push(`wait_for ${s.wait_for.event}: the device does not wait for it; add a 'wait' if the next action depends on it`);
+      // Only the host waits; fine after the last action, refused before another.
+      waitFor = s.wait_for.event;
     } else if ("enable_device" in s || "disable_device" in s) {
       throw new ScenarioError("enable_device / disable_device are not supported in scenarios yet (no generic device API in Verse)");
     }
@@ -381,6 +391,7 @@ export async function findYamlTest(testsDir: string, id: string): Promise<{ test
   const files = (await findTestFiles(testsDir)).filter((f) => /\.ya?ml$/.test(f));
   /** Documents too broken to read an id from: one of them may be the test. */
   const unreadable: string[] = [];
+  let match: { test: YamlTest; file: string } | undefined;
   for (const file of files) {
     const docs = parseAllDocuments(await readFile(file, "utf8"));
     const ids = docs.map((doc) => rawTestId(toJS(doc)));
@@ -394,10 +405,16 @@ export async function findYamlTest(testsDir: string, id: string): Promise<{ test
         const issues = parsed.error.issues.map((x) => `  ${x.path.join(".")}: ${x.message}`).join("\n");
         throw new ScenarioError(`${file} (document ${i + 1}) is not a valid test:\n${issues}`);
       }
-      if (!found && (parsed.data.id ?? slugify(parsed.data.name)) === id) found = parsed.data;
+      if ((parsed.data.id ?? slugify(parsed.data.name)) !== id) continue;
+      if (found) throw new ScenarioError(`more than one YAML test in ${file} has id '${id}'`);
+      found = parsed.data;
     }
-    if (found) return { test: found, file };
+    if (found) {
+      if (match) throw new ScenarioError(`more than one YAML test has id '${id}': ${match.file} and ${file}`);
+      match = { test: found, file };
+    }
   }
+  if (match) return match;
   if (unreadable.length > 0) throw new ScenarioError(`no YAML test with id '${id}', and some YAML could not be parsed:\n  ${unreadable.join("\n  ")}`);
   return undefined;
 }

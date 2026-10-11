@@ -60,7 +60,7 @@ start; it is not a synchronisation point with the host.
 | `eliminate` | `Damage` large enough to eliminate; the step fails if health stays above 0 (an invulnerable or sky-spawning player) | `player.state_changed`, `player.eliminated`, `scenario.step` |
 | `wait` | `Sleep` (only waits after `start_game`; earlier ones happen on the host before the device exists) | none |
 | `start_game` / `end_game` | nothing (the host does it over MCP) | |
-| `wait_for` | not mirrored: the device cannot see DevTools events | |
+| `wait_for` | host only, after the last player action; refused before one, since the device cannot see DevTools events | |
 | `enable_device` / `disable_device` | refused at generation time | |
 
 The device reports only what it observes (positions after the teleport,
@@ -114,8 +114,9 @@ player moved.
   when its own state already shows the player respawned. A player respawned
   skydiving keeps its fall speed through a teleport and takes landing
   damage, so do not assert an exact health after a respawn.
-- Because `wait_for` is not mirrored, put a `wait` before an action that
-  must happen after an outcome.
+- The device cannot wait for DevTools events, so a `wait_for` before a
+  player action is refused; use a `wait` before an action that must happen
+  after an outcome.
 - Teams in `spawn_player` are not enforced; players join by island settings.
 - `eliminate.by` is not attributed (the damage has no instigator).
 - The device uses its own emitter with `SeqStart := 1000000`, so its event

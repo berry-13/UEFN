@@ -19,6 +19,7 @@ test("player actions become ordered, confirmed device steps", () => {
         { enter: { player: 1, area: "A" } },
         { leave: { player: 1, area: "A" } },
         { eliminate: { player: 1 } },
+        // Host-only after the last action.
         { wait_for: { event: "capture.completed" } },
       ],
     }),
@@ -43,7 +44,7 @@ test("player actions become ordered, confirmed device steps", () => {
   assert.match(g.verse, /if \(Character\.GetHealth\(\) <= 0\.0\):\n\s+Emitter\.Emit\("player\.eliminated"/, "eliminate reports an observed elimination");
   // Every damaging step (damage or eliminate) reports an elimination it observes.
   assert.equal(g.verse.match(/player\.eliminated/g)?.length, g.plan.filter((s) => s.action === "damage_player" || s.action === "eliminate_player").length);
-  assert.equal(g.warnings.length, 2, g.warnings.join("\n"));
+  assert.equal(g.warnings.length, 1, g.warnings.join("\n"));
 });
 
 test("scenario events carry the test id, the plan fingerprint and step arguments", () => {
@@ -235,4 +236,32 @@ test("a damage step that changed nothing fails, and the generator version is par
   // A plan identical to an older generator's still gets a new fingerprint.
   const unversioned = [...g.plan.map((s) => [s.index, s.action, s.player, s.arg].join("\u0000")), "start_delay 0"].join("\n");
   assert.notEqual(g.fingerprint, createHash("sha256").update(unversioned).digest("hex").slice(0, 12));
+});
+
+test("a wait_for before a player action is refused; after the last one it is host-only", () => {
+  const opts = { id: "x", locations, startDelayMs: 0 };
+  assert.throws(
+    () =>
+      generateScenario(
+        parse({ name: "x", setup: ["start_game", { spawn_player: { id: 1 } }], steps: [{ wait_for: { event: "capture.completed" } }, { wait: "1s" }, { damage: { player: 1, amount: 5 } }] }),
+        opts,
+      ),
+    (e) => e instanceof ScenarioError && /wait_for capture\.completed before a player action/.test(e.message),
+  );
+  const g = generateScenario(parse({ name: "x", setup: ["start_game", { spawn_player: { id: 1 } }], steps: [{ wait_for: { event: "capture.completed" } }] }), opts);
+  assert.deepEqual(g.warnings, []);
+});
+
+test("findYamlTest refuses an id that more than one test has", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "scenario-dup-"));
+  try {
+    await writeFile(join(dir, "a.test.yaml"), "name: One\nid: dup\nsteps: []\n");
+    await writeFile(join(dir, "b.test.yaml"), "name: Two\nid: dup\nsteps: []\n");
+    await assert.rejects(findYamlTest(dir, "dup"), (e) => e instanceof ScenarioError && /more than one YAML test has id 'dup'/.test(e.message));
+    await rm(join(dir, "b.test.yaml"));
+    await writeFile(join(dir, "a.test.yaml"), "name: One\nid: dup\nsteps: []\n---\nname: Two\nid: dup\nsteps: []\n");
+    await assert.rejects(findYamlTest(dir, "dup"), /more than one YAML test in .* has id 'dup'/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

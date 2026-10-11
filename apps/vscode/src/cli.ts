@@ -133,11 +133,10 @@ export function runCli(cli: CliCommand, args: string[], options: CliRunOptions):
       }
       // Whatever the platform, never leave the promise pending if the process ignores the first attempt.
       forceTimer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGKILL");
-          // Orphaned grandchildren can hold the pipes open so 'close' never fires; settle anyway.
-          setTimeout(() => finish({ code: null }), 1000).unref();
-        }
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        // Orphaned grandchildren can hold the pipes open so 'close' never fires, even after the
+        // child itself exited; settle anyway.
+        setTimeout(() => finish({ code: child.exitCode }), 1000).unref();
       }, 3000);
       forceTimer.unref();
     };

@@ -168,6 +168,16 @@ export class McpUefnAdapter implements UEFNAdapter {
     return new RegExp(`(^|[^A-Za-z0-9_])${escaped}([^A-Za-z0-9_]|$)`).test(described.text);
   }
 
+  /**
+   * True when {@link hasTool}'s answer was checked against the server: a tool
+   * listed by name, or a toolset `describe_toolset` answered for. A slash
+   * mapping whose toolset was never described is accepted unverified.
+   */
+  toolVerified(mapping: string): boolean {
+    if (this.tools.some((t) => t.name === mapping)) return true;
+    return mapping.includes("/") && this.toolsets.has(mapping.slice(0, mapping.lastIndexOf("/")));
+  }
+
   /** Calls `describe_toolset` once for each toolset named in the tool mappings. */
   private async describeMappedToolsets(client: Client): Promise<void> {
     this.toolsets.clear();

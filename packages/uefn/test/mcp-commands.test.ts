@@ -66,7 +66,7 @@ test("start_game / end_game go through mapped MCP tools; player actions stay uns
 });
 
 /** A meta-tool server like UEFN 42.30: only list_toolsets / describe_toolset / call_tool are listed, and describe_toolset names tools `<toolset>.<tool>`. */
-async function metaServer(dir: string): Promise<{ script: string; calls: string }> {
+async function metaServer(dir: string, describe = true): Promise<{ script: string; calls: string }> {
   const calls = join(dir, "calls.txt");
   const script = join(dir, "meta.mjs");
   const mcp = import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js");
@@ -81,7 +81,7 @@ import { z } from ${JSON.stringify(zod)};
 import { appendFileSync } from "node:fs";
 const server = new McpServer({ name: "fake-uefn-meta", version: "0" });
 server.registerTool("list_toolsets", { description: "list" }, async () => ({ content: [{ type: "text", text: "ValkyrieToolset.SessionToolset" }] }));
-server.registerTool("describe_toolset", { description: "describe", inputSchema: { toolset_name: z.string() } }, async (a) =>
+if (${describe}) server.registerTool("describe_toolset", { description: "describe", inputSchema: { toolset_name: z.string() } }, async (a) =>
   a.toolset_name === "ValkyrieToolset.SessionToolset"
     ? { content: [{ type: "text", text: JSON.stringify({ returnValue: { tools: ["StartSession", "StartGame", "StopGame"].map((t) => ({ name: "ValkyrieToolset.SessionToolset." + t })) } }) }] }
     : { content: [{ type: "text", text: "Unknown toolset " + a.toolset_name }], isError: true },
@@ -131,10 +131,31 @@ test("toolset/tool mappings route through call_tool on a meta-tool server", asyn
     assert.equal(report.capabilities.find((c) => c.feature === "end game")?.status, "UNKNOWN");
     assert.equal(report.capabilities.find((c) => c.feature === "stop session")?.status, "UNKNOWN");
     assert.equal(adapter.hasTool("ValkyrieToolset.Missing/GetGameState"), false);
+    assert.equal(adapter.toolVerified(`${S}/StartSession`), true);
+    assert.equal(adapter.toolVerified("ValkyrieToolset.Missing/GetGameState"), true, "a toolset the server denies is checked too");
     await adapter.startSession();
     assert.deepEqual([...adapter.transport().supportedCommands()], ["start_game"]);
     assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true });
     assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), [`${S}/StartSession`, `${S}/StartGame`]);
+  } finally {
+    await adapter.disconnect();
+  }
+});
+
+test("without describe_toolset, slash mappings are accepted but not verified", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-mcp-nodescribe-"));
+  const { script } = await metaServer(dir, false);
+  const log = join(dir, "UnrealEditorFortnite.log");
+  await writeFile(log, "");
+  const adapter = new McpUefnAdapter({
+    mcp: McpAdapterConfig.parse({ command: process.execPath, args: [script], tools: { start_game: "Missing/NoSuchTool", end_game: "call_tool" }, timeout_ms: 20_000 }),
+    logPath: log,
+  });
+  try {
+    await adapter.connect();
+    assert.equal(adapter.hasTool("Missing/NoSuchTool"), true);
+    assert.equal(adapter.toolVerified("Missing/NoSuchTool"), false);
+    assert.equal(adapter.toolVerified("call_tool"), true);
   } finally {
     await adapter.disconnect();
   }

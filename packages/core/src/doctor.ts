@@ -408,10 +408,12 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
     const timeoutMs = options.connectTimeoutMs ?? 10_000;
     let tools: string[] | undefined;
     let exposed = new Set<string>();
+    let unverified = new Set<string>();
     try {
       await withTimeout(adapter.connect(), timeoutMs, "connecting to the MCP server");
       tools = ((await adapter.describeCapabilities()).tools ?? []).map((t) => t.name);
       exposed = adapterExposedTools(adapter, Object.values(mcp.tools));
+      unverified = new Set([...exposed].filter((name) => !adapter.toolVerified(name)));
       add({ id: "mcp.connect", title: "MCP server reachable", status: "pass", detail: `${tools.length} tool(s) exposed` });
     } catch (error) {
       add({
@@ -431,8 +433,17 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
     } else {
       const mapped = Object.entries(mcp.tools).filter((e): e is [string, string] => typeof e[1] === "string");
       const absent = mapped.filter(([, name]) => !exposed.has(name));
+      const unchecked = mapped.filter(([, name]) => unverified.has(name));
       add(
-        absent.length === 0
+        absent.length === 0 && unchecked.length > 0
+          ? {
+              id: "mcp.tool_names",
+              title: "Mapped tools exist on server",
+              status: "warn",
+              detail: `${unchecked.map(([k, n]) => `mcp.tools.${k}='${n}'`).join(", ")} could not be checked: the server did not describe the toolset`,
+              fix: "check the names against the server's describe_toolset output",
+            }
+          : absent.length === 0
           ? { id: "mcp.tool_names", title: "Mapped tools exist on server", status: "pass", detail: mapped.length ? mapped.map(([, n]) => n).join(", ") : "nothing mapped" }
           : {
               id: "mcp.tool_names",
