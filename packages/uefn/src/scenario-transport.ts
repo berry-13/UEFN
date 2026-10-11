@@ -66,6 +66,10 @@ export class ScenarioTransport implements RuntimeTransport {
   /** Why pending steps were abandoned (the match ended under them). */
   private abandoned: string | undefined;
   private waiters = new Set<() => void>();
+  /** Events the transport adds to the stream itself (see the respawn shortcut in command()). */
+  private injected: RuntimeEvent[] = [];
+  private onInject: (() => void) | undefined;
+  private injectedCount = 0;
 
   constructor(
     private readonly inner: RuntimeTransport,
@@ -83,9 +87,18 @@ export class ScenarioTransport implements RuntimeTransport {
   }
 
   async *receive(): AsyncIterable<RuntimeEvent> {
-    for await (const event of this.inner.receive()) {
-      this.observe(event);
-      yield event;
+    const events = this.inner.receive()[Symbol.asyncIterator]();
+    let next = events.next();
+    for (;;) {
+      while (this.injected.length > 0) yield this.injected.shift()!;
+      const injected = new Promise<"injected">((resolve) => (this.onInject = () => resolve("injected")));
+      const result = await Promise.race([next, injected]);
+      this.onInject = undefined;
+      if (result === "injected") continue;
+      if (result.done) return;
+      next = events.next();
+      this.observe(result.value);
+      yield result.value;
     }
   }
 
@@ -193,6 +206,16 @@ export class ScenarioTransport implements RuntimeTransport {
     // spawns them before moving them, but the device planned no spawn there.
     // It moves the current, respawned character, so the move covers the spawn.
     if (command.type === "spawn_player" && isReport(report) && report.action === "teleport" && report.player === player) {
+      // The fixture waits for the spawn; the island respawned the player and
+      // the device acts on the new character, so report that respawn.
+      this.injected.push({
+        id: `scenario_respawn_${++this.injectedCount}`,
+        timestamp: this.options.clock.now(),
+        type: "player.spawned",
+        source: { type: "system", id: "scenario" },
+        payload: { player: player!, respawned: true },
+      });
+      this.onInject?.();
       return { ok: true };
     }
     if (this.conflict) return { ok: false, error: this.conflict };

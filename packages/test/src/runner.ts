@@ -357,7 +357,13 @@ async function runAttempt(
   let cleanup: string | undefined;
   // A start whose game.started never arrived (phase still idle) still left a
   // match running; one that was seen to end needs nothing.
-  if ((engine.state.phase === "playing" || (ctx.gameStartSent && engine.state.phase === "idle")) && engine.supportsCommand("end_game")) {
+  const matchLeft = engine.state.phase === "playing" || (ctx.gameStartSent && engine.state.phase === "idle");
+  if (matchLeft && !engine.supportsCommand("end_game") && engine.usesScenarioDevices) {
+    // The scenario device runs once per match: a match nobody can end leaves
+    // the next attempt without a device run.
+    cleanup = "end_game is not available (map mcp.tools.end_game), and scenario devices need a new match per attempt";
+  }
+  if (matchLeft && engine.supportsCommand("end_game")) {
     // Wait for the match to end, as GameFixture.end() does, so a repeat or
     // retry does not start while this match (and its scenario device) winds down.
     const from = engine.events.mark();
@@ -370,16 +376,16 @@ async function runAttempt(
         () => undefined,
         (e: unknown) => (e as Error).message,
       );
-    // A match left running would leak into the next attempt or test: the
-    // attempt fails (whatever happened before) and the run stops after it.
-    if (cleanup !== undefined) {
-      const message = `cleanup could not end the match: ${cleanup}`;
-      if (status === "passed") {
-        status = "error";
-        failedStage = "CLEANUP";
-      }
-      error = error ? `${error}; ${message}` : message;
+  }
+  // A match left running would leak into the next attempt or test: the
+  // attempt fails (whatever happened before) and the run stops after it.
+  if (cleanup !== undefined) {
+    const message = `cleanup could not end the match: ${cleanup}`;
+    if (status === "passed") {
+      status = "error";
+      failedStage = "CLEANUP";
     }
+    error = error ? `${error}; ${message}` : message;
   }
 
   enter(status === "passed" ? "PASSED" : "FAILED");

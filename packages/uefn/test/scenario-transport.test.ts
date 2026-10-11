@@ -173,3 +173,19 @@ test("two copies of the same device in one match are a conflict", async () => {
   t.observe(ev("scenario.step", { scenario: "s", index: 0, action: "spawn_player", player: "player1", arg: "" }));
   assert.deepEqual(await t.command({ type: "spawn_player", player: "player1" }), { ok: true });
 });
+
+test("a host spawn covered by the device's move reports the respawn the fixture waits for", async () => {
+  // An inner stream that stays open, like a live session's.
+  const open: RuntimeTransport = { ...inner, receive: async function* () { await new Promise(() => {}); } };
+  const t = new ScenarioTransport(open, { clock: new RealClock(), stepTimeoutMs: 1000 });
+  const stream = t.receive()[Symbol.asyncIterator]();
+  const first = stream.next();
+  t.observe(ev("scenario.started", { scenario: "s", plan: "p", steps: 2 }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 0, action: "damage_player", player: "player1", arg: "500" }));
+  t.observe(ev("scenario.step", { scenario: "s", index: 1, action: "teleport", player: "player1", arg: "A" }));
+  await t.command({ type: "damage_player", player: "player1", amount: 500 });
+  assert.deepEqual(await t.command({ type: "spawn_player", player: "player1" }), { ok: true });
+  const spawned = (await first).value as RuntimeEvent;
+  assert.equal(spawned.type, "player.spawned");
+  assert.deepEqual(spawned.payload, { player: "player1", respawned: true });
+});

@@ -375,3 +375,31 @@ test("cleanup ends a match whose start was sent even if game.started never arriv
     await engine.close();
   }
 });
+
+test("with scenario devices, a match that cleanup cannot end stops the run", async () => {
+  const dir = await project(`${CONFIG()}scenario:\n  enabled: true\n  locations:\n    A: [0, 0, 0]\n`, { "a.test.yaml": YAML_TEST, "b.test.yaml": YAML_TEST.replace("name: Capture A", "name: Capture B") });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  Object.defineProperty(engine, "usesScenarioDevices", { get: () => true });
+  const real = engine.adapter.transport.bind(engine.adapter);
+  engine.adapter.transport = () => {
+    const inner = real();
+    return {
+      ...inner,
+      name: inner.name,
+      start: () => inner.start(),
+      stop: () => inner.stop(),
+      receive: () => inner.receive(),
+      // No end_game mapped.
+      supportedCommands: () => inner.supportedCommands().filter((c) => c !== "end_game"),
+      command: (command) => inner.command(command),
+    };
+  };
+  try {
+    const summary = await runTests(engine, { skipBuild: true });
+    assert.deepEqual(summary.tests.map((t) => t.id), ["capture-a"]);
+    assert.match(summary.tests[0]!.attempts[0]!.error ?? "", /end_game is not available/);
+    assert.match(summary.error ?? "", /stopped after a cleanup left the match running/);
+  } finally {
+    await engine.close();
+  }
+});

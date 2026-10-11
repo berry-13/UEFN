@@ -57,6 +57,8 @@ export interface LogTransportOptions {
    * since the runtime can say hello before the launch call returns.
    */
   fromOffset?: number;
+  /** Inode of the log when `fromOffset` was taken: a different file is read from its start. */
+  fromIno?: number;
 }
 
 /**
@@ -89,10 +91,13 @@ export class LogFileTransport implements RuntimeTransport {
 
   async start(): Promise<void> {
     // Only lines written after the session starts are relevant.
-    const size = await stat(this.options.path).then((s) => s.size, () => 0);
+    const now = await stat(this.options.path).catch(() => undefined);
+    const size = now?.size ?? 0;
     const from = this.options.fromOffset;
-    // A smaller log than at launch was rotated meanwhile: read it all.
-    this.offset = from === undefined ? size : from <= size ? from : 0;
+    // A log replaced since launch (another file, or smaller than at launch)
+    // is read from its start.
+    const replaced = from !== undefined && (from > size || (this.options.fromIno !== undefined && now?.ino !== this.options.fromIno));
+    this.offset = from === undefined ? size : replaced ? 0 : from;
     if (this.options.backfillBytes && this.offset > 0) await this.backfill(this.options.backfillBytes);
     this.timer = setInterval(() => void this.poll(), this.options.pollMs ?? 200);
   }

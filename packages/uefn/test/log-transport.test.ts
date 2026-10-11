@@ -216,3 +216,20 @@ test("a backfill reads back as far as the current session's launch", async () =>
   const events = await drain(transport);
   assert.deepEqual(events.map((e) => e.type), ["session.ready", "game.started"]);
 });
+
+test("a log replaced during the launch is read from its start", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-log-"));
+  const path = join(dir, "UnrealEditorFortnite.log");
+  // Longer than the new log's first line, so the stale offset would skip it.
+  await writeFile(path, Array.from({ length: 5 }, (_, i) => `[2026.10.11-10.00.00:000][  1]LogTemp: the previous editor log, line ${i}`).join("\n") + "\n");
+  const { stat: statFile, rename } = await import("node:fs/promises");
+  const before = await statFile(path);
+  // The editor rotated the log; the new one already outgrew the old offset.
+  const hello = "[2026.10.11-11.00.26:222][702]LogVerse: DevTools-devtools_log: [UEFN-DEVTOOLS]|1|H|0|0.1.0";
+  await writeFile(`${path}.new`, [hello, ...Array.from({ length: 20 }, (_, i) => `[2026.10.11-11.00.27:000][  1]LogTemp: ${i}`), ""].join("\n"));
+  await rename(`${path}.new`, path);
+  const transport = new LogFileTransport({ path, clock: fixedClock(), pollMs: 10, fromOffset: before.size, fromIno: before.ino });
+  await transport.start();
+  const events = await drain(transport);
+  assert.equal(events[0]?.type, "session.ready");
+});

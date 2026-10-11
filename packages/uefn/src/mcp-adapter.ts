@@ -284,7 +284,8 @@ export class McpUefnAdapter implements UEFNAdapter {
     const reused = status === "connected" || status === "playing";
     // StartSession returns once the client is in the match, by which time
     // the runtime may have logged its hello; read the log from before launch.
-    const launchOffset = !reused && this.options.logPath ? await stat(this.options.logPath).then((s) => s.size, () => 0) : undefined;
+    const launch = !reused && this.options.logPath ? await stat(this.options.logPath).catch(() => undefined) : undefined;
+    const launchOffset = !reused && this.options.logPath ? (launch?.size ?? 0) : undefined;
     if (!reused) {
       // No `headed` argument: every UEFN play session launches the Fortnite
       // client (seen in real editor logs), and an unknown argument could make
@@ -311,7 +312,7 @@ export class McpUefnAdapter implements UEFNAdapter {
       path: this.options.logPath,
       clock: this.clock,
       ...(reused ? { backfillBytes: BACKFILL_BYTES } : {}),
-      ...(launchOffset !== undefined ? { fromOffset: launchOffset } : {}),
+      ...(launchOffset !== undefined ? { fromOffset: launchOffset, ...(launch ? { fromIno: launch.ino } : {}) } : {}),
     });
     // A scenario device runs once per match, at its start. A match already
     // running when the test starts (a reused session, or one UEFN auto-started
