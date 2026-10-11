@@ -53,6 +53,8 @@ export class TestContext {
   debugTest?: DebugTestInfo;
   /** Session-clock time spent paused in the debugger; excluded from the test timeout. */
   pausedMs = 0;
+  /** A start_game was accepted and no end_game since: cleanup ends that match even if game.started never arrived. */
+  gameStartSent = false;
   /** The running phase's timeout, disarmed while paused. */
   deadline?: { suspend(): void; resume(): void };
   private stepIndex = 0;

@@ -202,3 +202,17 @@ test("a backfill ignores hellos from an earlier play session", async () => {
   // The current session's match is running, but its runtime never said hello.
   assert.deepEqual(events.map((e) => e.type), ["game.started"]);
 });
+
+test("a backfill reads back as far as the current session's launch", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-log-"));
+  const path = join(dir, "UnrealEditorFortnite.log");
+  const launch = "[2026.10.11-10.25.57:426][465]LogValkyrieActivityTracker: Session -> Start Activity: Matchmaking - Attempting matchmaking";
+  const hello = "[2026.10.11-10.26.06:754][491]LogVerse: DevTools-devtools_log: [UEFN-DEVTOOLS]|1|H|0|0.1.0";
+  // Far more log since the hello than one backfill chunk holds.
+  const noise = Array.from({ length: 2000 }, (_, i) => `[2026.10.11-10.30.00:000][  1]LogTemp: line ${i} with some padding to make it longer`);
+  await writeFile(path, [launch, hello, REAL.inProgress, ...noise, ""].join("\n"));
+  const transport = new LogFileTransport({ path, clock: fixedClock(), pollMs: 10, backfillBytes: 4096 });
+  await transport.start();
+  const events = await drain(transport);
+  assert.deepEqual(events.map((e) => e.type), ["session.ready", "game.started"]);
+});

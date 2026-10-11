@@ -355,14 +355,16 @@ async function runAttempt(
 
   enter("CLEANUP");
   let cleanup: string | undefined;
-  if (engine.state.phase === "playing" && engine.supportsCommand("end_game")) {
+  // A start whose game.started never arrived (phase still idle) still left a
+  // match running; one that was seen to end needs nothing.
+  if ((engine.state.phase === "playing" || (ctx.gameStartSent && engine.state.phase === "idle")) && engine.supportsCommand("end_game")) {
     // Wait for the match to end, as GameFixture.end() does, so a repeat or
     // retry does not start while this match (and its scenario device) winds down.
     const from = engine.events.mark();
     cleanup = await engine
       .command({ type: "end_game" })
-      .then(async () => {
-        if (engine.state.phase === "playing") await engine.waitForEvent({ type: "game.ended" }, { timeoutMs: ctx.expectTimeout, fromIndex: from });
+      .then(async (result) => {
+        if (engine.state.phase === "playing" || !result.noop) await engine.waitForEvent({ type: "game.ended" }, { timeoutMs: ctx.expectTimeout, fromIndex: from });
       })
       .then(
         () => undefined,

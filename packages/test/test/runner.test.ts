@@ -343,3 +343,35 @@ test("a cleanup that leaves the match running stops retries and the rest of the 
     await engine.close();
   }
 });
+
+test("cleanup ends a match whose start was sent even if game.started never arrived", async () => {
+  const dir = await project(CONFIG().replace("expect_timeout: 5s", "expect_timeout: 1s"), { "a.test.yaml": YAML_TEST });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const sent: string[] = [];
+  const real = engine.adapter.transport.bind(engine.adapter);
+  engine.adapter.transport = () => {
+    const inner = real();
+    return {
+      ...inner,
+      name: inner.name,
+      start: () => inner.start(),
+      stop: () => inner.stop(),
+      // The log line for the match start is lost.
+      receive: async function* () {
+        for await (const e of inner.receive()) if (e.type !== "game.started") yield e;
+      },
+      supportedCommands: () => inner.supportedCommands(),
+      command: async (command) => {
+        sent.push(command.type);
+        return inner.command(command);
+      },
+    };
+  };
+  try {
+    const summary = await runTests(engine, { skipBuild: true });
+    assert.equal(summary.tests[0]!.attempts[0]!.failedStage, "RUNNING");
+    assert.ok(sent.includes("end_game"), sent.join(","));
+  } finally {
+    await engine.close();
+  }
+});

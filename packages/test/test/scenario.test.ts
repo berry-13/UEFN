@@ -210,3 +210,15 @@ test("a wait before start_game is not replayed by the device", () => {
   assert.doesNotMatch(g.verse, /Sleep\(7\.0\)/);
   assert.match(g.verse, /Sleep\(2\.0\)/);
 });
+
+test("a whole match before the player actions is refused", () => {
+  assert.throws(
+    () =>
+      generateScenario(parse({ name: "C", setup: ["start_game", { wait: "5s" }, "end_game", "start_game"], steps: [{ teleport: { player: 1, location: "A" } }] }), {
+        id: "c",
+        locations,
+        startDelayMs: 0,
+      }),
+    /a complete match \(start_game \.\.\. end_game\) before the player actions is not supported/,
+  );
+});

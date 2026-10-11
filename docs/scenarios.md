@@ -40,7 +40,8 @@ different test. Ids such as `foo-bar` and `foo_bar` map to the same class
 name; give one of them a distinct id, or use `--out`.
 
 The test must `start_game` before its first player action (normally in
-`setup`), and may not start or end the match after it. The device runs when
+`setup`), and may not start or end the match after it, nor run a whole
+match (`start_game` ... `end_game`) before it. The device runs when
 the match begins and replays its whole plan on every match start, so a
 match it was not started by the test would report before the test began
 (and the test's observed state would miss those events), and a restart

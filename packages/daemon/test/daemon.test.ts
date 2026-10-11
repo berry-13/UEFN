@@ -520,3 +520,31 @@ test("taking over an unreadable lock never removes a replacement created meanwhi
   assert.equal(await takeOverLock(path, undefined, await statFile(path, { bigint: true })), true);
   await assert.rejects(statFile(path));
 });
+
+test("a shutdown whose client disconnects while a run finishes still stops the daemon", async () => {
+  let stopped = false;
+  const { client, info, close } = await start({ onShutdown: () => void (stopped = true) });
+  try {
+    let finished = false;
+    const run = client.runTests({ filter: "capture" }).finally(() => (finished = true));
+    await new Promise((r) => setTimeout(r, 5));
+    // The shutdown waits behind the run; its client goes away meanwhile.
+    const req = request({
+      host: "127.0.0.1",
+      port: info.port,
+      path: "/api/shutdown",
+      method: "POST",
+      headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json" },
+    });
+    req.on("error", () => {});
+    req.end("{}");
+    await new Promise((r) => setTimeout(r, 5));
+    req.destroy();
+    assert.equal(finished, false, "the client must leave while the run is still going");
+    await run;
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(stopped, true);
+  } finally {
+    await close();
+  }
+});

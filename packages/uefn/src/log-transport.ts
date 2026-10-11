@@ -48,7 +48,8 @@ export interface LogTransportOptions {
   /**
    * When attaching to a session that is already running, read up to this
    * many bytes before the end of the log and replay its most recent DevTools
-   * hello and match state, which were logged before the tail started.
+   * hello and match state, which were logged before the tail started. The
+   * log is read backwards in chunks of this size up to the session launch.
    */
   backfillBytes?: number;
   /**
@@ -180,39 +181,57 @@ export class LogFileTransport implements RuntimeTransport {
   }
 
   /**
-   * Replays the latest hello and match state found in the last `bytes` of
-   * the log, from the current play session only: lines before the latest
-   * session launch belong to an earlier session (whose runtime may since
-   * have been removed).
+   * Replays the latest hello and match state of the current play session:
+   * lines before the latest session launch belong to an earlier session
+   * (whose runtime may since have been removed).
    */
-  private async backfill(bytes: number): Promise<void> {
-    const start = Math.max(0, this.offset - bytes);
+  private async backfill(chunkBytes: number): Promise<void> {
+    // Read backwards a chunk at a time, however long ago the session began,
+    // until both lines are found or the session launch (or file start) is hit.
     const handle = await open(this.options.path, "r");
-    let text: string;
+    let hello: { order: number; line: string } | undefined;
+    let state: { order: number; line: string } | undefined;
     try {
-      const buffer = Buffer.alloc(this.offset - start);
-      await handle.read(buffer, 0, buffer.length, start);
-      text = buffer.toString("utf8");
+      let end = this.offset;
+      let carry = Buffer.alloc(0); // the partial first line of the chunk after this one
+      let first = true;
+      let order = 0;
+      scan: while (end > 0) {
+        const start = Math.max(0, end - chunkBytes);
+        const chunk = Buffer.alloc(end - start);
+        await handle.read(chunk, 0, chunk.length, start);
+        let bytes = Buffer.concat([chunk, carry]);
+        if (first) {
+          // The unterminated last line is still being written.
+          bytes = bytes.subarray(0, bytes.lastIndexOf(0x0a) + 1);
+          first = false;
+        }
+        if (start > 0) {
+          const newline = bytes.indexOf(0x0a);
+          carry = newline < 0 ? bytes : bytes.subarray(0, newline + 1);
+          bytes = newline < 0 ? Buffer.alloc(0) : bytes.subarray(newline + 1);
+        }
+        const lines = bytes.toString("utf8").split(/\r?\n/);
+        lines.pop();
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i]!;
+          order--;
+          if (SESSION_LAUNCH.test(line)) break scan;
+          if (line.includes(WIRE_MARKER)) {
+            if (hello === undefined && /\|H\|/.test(line)) hello = { order, line };
+          } else if (state === undefined && minigameStateOf(line) !== undefined) {
+            state = { order, line };
+          }
+          if (hello && state) break scan;
+        }
+        end = start;
+      }
     } finally {
       await handle.close();
     }
-    const lines = text.split(/\r?\n/);
-    if (start > 0) lines.shift(); // partial first line
-    lines.pop(); // unterminated last line (or the empty string after the final newline)
-    let hello: number | undefined;
-    let state: number | undefined;
-    for (let i = lines.length - 1; i >= 0 && (hello === undefined || state === undefined); i--) {
-      const line = lines[i]!;
-      if (SESSION_LAUNCH.test(line)) break;
-      if (line.includes(WIRE_MARKER)) {
-        if (hello === undefined && /\|H\|/.test(line)) hello = i;
-      } else if (state === undefined && minigameStateOf(line) !== undefined) {
-        state = i;
-      }
-    }
     // Replayed in log order and stamped now: they describe the current state.
-    for (const i of [hello, state].filter((n): n is number => n !== undefined).sort((a, b) => a - b)) {
-      this.ingest(lines[i]!, false);
+    for (const found of [hello, state].filter((f) => f !== undefined).sort((a, b) => a.order - b.order)) {
+      this.ingest(found.line, false);
     }
   }
 

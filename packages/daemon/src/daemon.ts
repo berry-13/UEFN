@@ -371,6 +371,23 @@ export class DevToolsDaemon {
           if (this.closing) return { stopping: true };
           // From here on mutations are refused, so nothing can queue behind the barrier below.
           this.closing = true;
+          // Shut down only once the response has gone out: stop() closes every
+          // connection, which would otherwise cut this one off (seen on Windows).
+          // Registered before the wait below, so a client that disconnects
+          // while a run finishes still triggers the shutdown.
+          let ready = false;
+          let fired = false;
+          const shutdown = () => {
+            if (fired || !ready) return;
+            fired = true;
+            setImmediate(this.options.onShutdown ?? (() => void this.stop()));
+          };
+          let gone = false;
+          res.once("finish", shutdown);
+          res.once("close", () => {
+            gone = true;
+            shutdown();
+          });
           // Let an in-progress run or session change finish before the engine closes.
           await new Promise<void>((done) => {
             const timer = setTimeout(done, SHUTDOWN_WAIT_MS);
@@ -380,16 +397,9 @@ export class DevToolsDaemon {
               done();
             });
           });
-          // Shut down only once the response has gone out: stop() closes every
-          // connection, which would otherwise cut this one off (seen on Windows).
-          let fired = false;
-          const shutdown = () => {
-            if (fired) return;
-            fired = true;
-            setImmediate(this.options.onShutdown ?? (() => void this.stop()));
-          };
-          res.once("finish", shutdown);
-          res.once("close", shutdown);
+          ready = true;
+          // The client left during the wait: no response will be written.
+          if (gone || res.destroyed) shutdown();
           return { stopping: true };
         }),
       },

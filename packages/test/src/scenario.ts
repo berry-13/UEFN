@@ -128,6 +128,7 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
   const warnings: string[] = [];
   const body: string[] = [];
   let lastLifecycle: "start_game" | "end_game" | undefined;
+  let sawStart = false;
 
   const slot = (id: string | number): { name: string; index: number } => {
     const name = playerId(id);
@@ -250,6 +251,14 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
           `${lifecycle} after the first player action is not supported: the device replays its whole plan on every match start; split the test at the match boundary`,
         );
       }
+      // The device runs in every match: a whole match before the one with the
+      // player actions would run the plan there too.
+      if (lifecycle === "start_game" && lastLifecycle === "end_game" && sawStart) {
+        throw new ScenarioError(
+          "a complete match (start_game ... end_game) before the player actions is not supported: the device would run its plan in that match too; split the test at the match boundary",
+        );
+      }
+      if (lifecycle === "start_game") sawStart = true;
       lastLifecycle = lifecycle;
       continue;
     }

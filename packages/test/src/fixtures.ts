@@ -212,6 +212,7 @@ export class GameFixture {
     await this.ctx.step("Game started", async () => {
       const from = this.ctx.engine.events.mark();
       const result = await send(this.ctx, { type: "start_game" });
+      this.ctx.gameStartSent = true;
       // A match that was already running (UEFN starts one on launch) emits no
       // log line; the transport reports it unless the state already shows it.
       if (result.noop && this.ctx.engine.state.phase === "playing") return;
@@ -223,6 +224,7 @@ export class GameFixture {
     await this.ctx.step("Game ended", async () => {
       const from = this.ctx.engine.events.mark();
       const result = await send(this.ctx, { type: "end_game" });
+      this.ctx.gameStartSent = false;
       if (result.noop && this.ctx.engine.state.phase !== "playing") return;
       await this.ctx.engine.waitForEvent({ type: "game.ended" }, { timeoutMs: this.ctx.expectTimeout, fromIndex: from });
     });
