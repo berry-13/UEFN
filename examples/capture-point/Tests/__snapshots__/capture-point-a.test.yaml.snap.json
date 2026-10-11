@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "snapshots": {
+    "capture-point-a::captured-state": {
+      "devices": {
+        "CapturePointA": {
+          "enabled": true,
+          "extra": {},
+          "id": "CapturePointA",
+          "owner": 1,
+          "progress": 100,
+          "state": "Captured",
+          "triggerCount": 1,
+          "type": "capture_area_device"
+        },
+        "CapturePointB": {
+          "enabled": true,
+          "extra": {},
+          "id": "CapturePointB",
+          "progress": 0,
+          "state": "Neutral",
+          "triggerCount": 0,
+          "type": "capture_area_device"
+        }
+      },
+      "phase": "playing",
+      "players": {
+        "player1": {
+          "alive": true,
+          "areas": [
+            "CapturePointA"
+          ],
+          "deaths": 0,
+          "eliminations": 0,
+          "extra": {},
+          "health": 100,
+          "id": "player1",
+          "score": 0,
+          "shield": 0,
+          "team": 1
+        }
+      },
+      "probes": {},
+      "round": 1,
+      "teams": {
+        "1": {
+          "id": 1,
+          "score": 50
+        }
+      }
+    }
+  }
+}

@@ -7,3 +7,4 @@ export * from "./state.ts";
 export * from "./audit.ts";
 export * from "./engine.ts";
 export * from "./persistence.ts";
+export * from "./recorder.ts";

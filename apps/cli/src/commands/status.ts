@@ -20,7 +20,7 @@ export const status: Command = {
     print(values, data, () => {
       console.log(`Project   ${data.project}`);
       console.log(`Root      ${data.root}`);
-      console.log(`Config    ${data.config ?? "(defaults — run 'uefn init')"}`);
+      console.log(`Config    ${data.config ?? "(defaults, run 'uefn init')"}`);
       console.log(`Adapter   ${data.adapter}`);
       console.log(`Verse     ${data.verseFiles} file(s)`);
       console.log(`Tests     ${data.testFiles} file(s)`);

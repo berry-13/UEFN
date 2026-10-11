@@ -15,7 +15,7 @@ export const capabilities: Command = {
         }
         if (report.tools) {
           console.log(`\nTools exposed by the UEFN MCP server (${report.tools.length}):`);
-          for (const t of report.tools) console.log(`  ${t.name}${t.description ? ` — ${t.description.split("\n")[0]}` : ""}`);
+          for (const t of report.tools) console.log(`  ${t.name}${t.description ? `: ${t.description.split("\n")[0]}` : ""}`);
         }
       });
       return 0;

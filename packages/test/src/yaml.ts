@@ -9,7 +9,7 @@ import { slugify } from "./names.ts";
 const Duration = z.union([z.number(), z.string()]);
 const Payload = z.record(z.string(), z.unknown());
 
-const StepSchema = z.union([
+export const StepSchema = z.union([
   z.enum(["start_game", "end_game"]),
   z.object({ start_game: z.null() }).strict(),
   z.object({ end_game: z.null() }).strict(),
@@ -24,7 +24,7 @@ const StepSchema = z.union([
   z.object({ wait: Duration }).strict(),
   z.object({ wait_for: z.object({ event: z.string(), match: Payload.optional(), timeout: Duration.optional() }) }).strict(),
 ]);
-type Step = z.infer<typeof StepSchema>;
+export type Step = z.infer<typeof StepSchema>;
 
 const AssertSchema = z.union([
   z.object({
@@ -51,6 +51,18 @@ const AssertSchema = z.union([
     event: z.object({ type: z.string(), match: Payload.optional(), times: z.number().int().nonnegative().optional() }),
   }).strict(),
   z.object({ probe: z.object({ id: z.string(), value: z.unknown() }) }).strict(),
+  z.object({
+    snapshot: z.union([
+      z.string(),
+      z
+        .object({
+          name: z.string().optional(),
+          include: z.array(z.enum(["devices", "teams", "players", "probes", "positions"])).optional(),
+          ignore: z.array(z.string()).optional(),
+        })
+        .strict(),
+    ]),
+  }).strict(),
 ]);
 type Assertion = z.infer<typeof AssertSchema>;
 
@@ -66,7 +78,7 @@ export const YamlTestSchema = z.object({
 });
 export type YamlTest = z.infer<typeof YamlTestSchema>;
 
-async function runStep(game: GameFixture, step: Step): Promise<void> {
+export async function runStep(game: GameFixture, step: Step): Promise<void> {
   if (step === "start_game" || (typeof step === "object" && "start_game" in step)) return game.start();
   if (step === "end_game" || (typeof step === "object" && "end_game" in step)) return game.end();
   if ("spawn_player" in step) {
@@ -114,6 +126,13 @@ async function runAssertion(game: GameFixture, a: Assertion): Promise<void> {
   } else if ("event" in a) {
     const { type, match, times } = a.event;
     await expect(game.events).toHaveOccurred(type, match, times !== undefined ? { times } : {});
+  } else if ("snapshot" in a) {
+    const s = typeof a.snapshot === "string" ? { name: a.snapshot } : a.snapshot;
+    await expect(game).toMatchSnapshot({
+      ...(s.name !== undefined ? { name: s.name } : {}),
+      ...(s.include ? { include: s.include } : {}),
+      ...(s.ignore ? { ignore: s.ignore } : {}),
+    });
   } else {
     await expect(game.probe(a.probe.id)).toHaveValue(a.probe.value);
   }

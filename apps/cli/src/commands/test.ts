@@ -17,6 +17,7 @@ export const test: Command = {
     verbose: { type: "boolean" },
     reporter: { type: "string", multiple: true },
     output: { type: "string" },
+    "update-snapshots": { type: "boolean" },
   },
   optionHelp: [
     "--repeat <n>           Run each test n times and report reliability",
@@ -28,6 +29,7 @@ export const test: Command = {
     "--reporter <name>      console | json | junit | github (repeat or comma-separate;",
     "                       github is added automatically when GITHUB_ACTIONS=true)",
     "--output <file>        junit/json output file (default .devtools/results/junit.xml)",
+    "--update-snapshots     Write/overwrite state snapshots instead of comparing",
   ],
   async run(values, positionals) {
     if (values.watch) return watchTests(values);
@@ -44,6 +46,7 @@ export const test: Command = {
         ...(seed !== undefined ? { seed } : {}),
         ...(retries !== undefined ? { retries } : {}),
         skipBuild: values["no-compile"] === true,
+        ...(values["update-snapshots"] ? { updateSnapshots: true } : {}),
         ...(values.json && !reporters?.length
           ? {}
           : {

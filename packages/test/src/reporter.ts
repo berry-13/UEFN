@@ -26,7 +26,7 @@ export function consoleReporter(options: ReporterOptions = {}): (event: RunnerEv
         at: a.timestamp,
         passed: a.passed,
         text: a.description,
-        error: a.passed ? undefined : `expected ${JSON.stringify(a.expected)}, received ${JSON.stringify(a.received)}`,
+        error: a.passed ? undefined : a.message ?? `expected ${JSON.stringify(a.expected)}, received ${JSON.stringify(a.received)}`,
       })),
     ].sort((a, b) => a.at - b.at);
     for (const item of items) {
