@@ -165,6 +165,15 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       summary.artifactDir = relative(engine.root, artifactRoot);
     }
     await writeArtifact(artifactRoot, "summary.json", summary).catch(() => {});
+    // History must never fail a run.
+    try {
+      engine.db?.recordRun(summary, {
+        ...(engine.session?.gitCommit ? { gitCommit: engine.session.gitCommit } : {}),
+        ...(engine.session?.git?.branch ? { gitBranch: engine.session.git.branch } : {}),
+      });
+    } catch {
+      // ignored
+    }
   }
   stage(summary.status === "passed" ? "PASSED" : "FAILED");
   emit({ kind: "done", summary });
