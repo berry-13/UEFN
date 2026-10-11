@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { openSync, closeSync, readFileSync } from "node:fs";
+import { openSync, closeSync, existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -160,8 +160,17 @@ async function stop(values: Values): Promise<number> {
     return 0;
   }
   const { info, live } = found;
-  // Not answering and not provably a daemon: the pid is gone or now belongs to something else.
-  if (!live && (info.stale || !isDaemonProcess(info.pid))) {
+  // Not answering, and the pid is gone or provably something else. Where the
+  // process cannot be identified (no /proc: Windows, macOS), a live pid may be
+  // a daemon that missed one probe, so its metadata and lock are kept.
+  const identity = isDaemonProcess(info.pid);
+  if (!live && !info.stale && identity === undefined) {
+    console.error(
+      `daemon (pid ${info.pid}) is running but did not answer, and this platform cannot confirm it is a DevTools daemon; retry, or stop pid ${info.pid} manually`,
+    );
+    return 1;
+  }
+  if (!live && (info.stale || identity === false)) {
     await removeDaemonInfo(root, info.pid);
     console.log(`Removed stale daemon.json (pid ${info.pid} is not a running daemon).`);
     return 0;
@@ -172,7 +181,7 @@ async function stop(values: Values): Promise<number> {
   } catch {
     // daemon.json is a file in the project, so its pid is not trusted on its
     // own: only signal a process whose command line is a `daemon start`.
-    if (!isDaemonProcess(info.pid)) {
+    if (identity !== true) {
       console.error(`daemon did not answer its shutdown endpoint and pid ${info.pid} cannot be confirmed as a DevTools daemon; stop it manually`);
       return 1;
     }
@@ -214,10 +223,14 @@ async function status(values: Values): Promise<number> {
   return 0;
 }
 
-/** True when `pid` is a running `uefn daemon start`. Only checkable through /proc (Linux, WSL). */
-function isDaemonProcess(pid: number): boolean {
+/**
+ * True when `pid` is a running `uefn daemon start`, false when it is not (or
+ * is gone), undefined when the platform cannot tell (no /proc).
+ */
+export function isDaemonProcess(pid: number, procRoot = "/proc"): boolean | undefined {
+  if (!existsSync(procRoot)) return isProcessAlive(pid) ? undefined : false;
   try {
-    const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    const argv = readFileSync(`${procRoot}/${pid}/cmdline`, "utf8").split("\0");
     const i = argv.indexOf("daemon");
     return i > 0 && argv[i + 1] === "start";
   } catch {

@@ -57,7 +57,7 @@ start; it is not a synchronisation point with the host.
 | `leave` | `TeleportTo` `<area>.outside` if configured, else 2000 units along +X from the area's position (not checked to be outside the area) | `player.moved`, `scenario.step` |
 | `damage: { amount }` | `Damage(amount)` | `player.state_changed` (health, shield), `player.eliminated` when health reads 0, `scenario.step` |
 | `eliminate` | `Damage` large enough to eliminate; the step fails if health stays above 0 (an invulnerable or sky-spawning player) | `player.state_changed`, `player.eliminated`, `scenario.step` |
-| `wait` | `Sleep` | none |
+| `wait` | `Sleep` (only waits after `start_game`; earlier ones happen on the host before the device exists) | none |
 | `start_game` / `end_game` | nothing (the host does it over MCP) | |
 | `wait_for` | not mirrored: the device cannot see DevTools events | |
 | `enable_device` / `disable_device` | refused at generation time | |
@@ -90,6 +90,8 @@ player moved.
   regenerate and recompile. With `scenario.enabled`, the runner also tells
   the host which device each YAML test generates, so a single placed device
   that is stale or belongs to another test is refused at its first step.
+  A selected YAML test whose device cannot be generated (an unknown
+  location, an unsupported step) fails validation before anything runs.
   `game.ended` releases the lock and drops the match's unconsumed reports; a
   step still waiting fails then.
 - When `uefn test` attaches to a session whose match is already running,

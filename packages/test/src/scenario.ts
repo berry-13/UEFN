@@ -55,7 +55,15 @@ export interface GeneratedScenario {
   warnings: string[];
 }
 
-export class ScenarioError extends Error {}
+export class ScenarioError extends Error {
+  /** `no-actions`: the test has no player actions, so it needs no device. */
+  constructor(
+    message: string,
+    readonly kind: "invalid" | "no-actions" = "invalid",
+  ) {
+    super(message);
+  }
+}
 
 /**
  * Distance a `leave` step moves the player away from the area, in Unreal
@@ -286,6 +294,9 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
       damage(p, ELIMINATE_DAMAGE, "eliminate_player", s.eliminate.by ?? "", `eliminate ${p.name}`);
       live.delete(p.name);
     } else if ("wait" in s) {
+      // The device starts with the match: a wait before start_game happens
+      // on the host before the device exists, so it is not mirrored.
+      if (lastLifecycle !== "start_game") continue;
       const seconds = parseDuration(s.wait) / 1000;
       timing.push(`wait ${seconds} before ${plan.length}`);
       body.push(`        Sleep(${verseFloat(seconds)})`);
@@ -295,7 +306,7 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
       throw new ScenarioError("enable_device / disable_device are not supported in scenarios yet (no generic device API in Verse)");
     }
   }
-  if (plan.length === 0) throw new ScenarioError(`test '${options.id}' has no player actions to run in a scenario`);
+  if (plan.length === 0) throw new ScenarioError(`test '${options.id}' has no player actions to run in a scenario`, "no-actions");
   const fingerprint = scenarioFingerprint(plan, timing);
 
   const verse = [

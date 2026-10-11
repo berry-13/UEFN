@@ -263,3 +263,13 @@ test("with scenarios enabled, each YAML test tells the transport which device it
     await engine.close();
   }
 });
+
+test("with scenarios enabled, a test whose device cannot be generated fails validation", async () => {
+  // Location A has no position in scenario.locations or the simulator config.
+  const dir = await project(`${CONFIG()}scenario:\n  enabled: true\n`, { "a.test.yaml": YAML_TEST });
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  const summary = await runTests(engine, { skipBuild: true });
+  await engine.close();
+  assert.equal(summary.failedStage, "VALIDATING");
+  assert.match(summary.error ?? "", /scenario cannot be generated for capture-a: teleport: no position for 'A'/);
+});

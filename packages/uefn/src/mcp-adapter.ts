@@ -222,11 +222,18 @@ export class McpUefnAdapter implements UEFNAdapter {
     const ended = await this.gameCommand("end_game");
     if (!ended.ok) return ended;
     const deadline = Date.now() + this.options.mcp.timeout_ms;
-    while ((await this.gameRunning()) === true) {
-      if (Date.now() > deadline) return { ok: false, error: "UEFN still reports the match running after StopGame; cannot restart it for the scenario device" };
+    for (;;) {
+      const running = await this.gameRunning();
+      if (running !== true) {
+        const started = await this.gameCommand("start_game");
+        // Without game_state the end of the match cannot be observed, so a
+        // StartGame refused while it winds down is retried until the deadline.
+        if (started.ok || running === false || Date.now() > deadline) return started;
+      } else if (Date.now() > deadline) {
+        return { ok: false, error: "UEFN still reports the match running after StopGame; cannot restart it for the scenario device" };
+      }
       await new Promise((r) => setTimeout(r, 250));
     }
-    return this.gameCommand("start_game");
   }
 
   private async gameRunning(): Promise<boolean | undefined> {
@@ -503,8 +510,11 @@ class McpCommandTransport implements RuntimeTransport {
     if ((command.type === "start_game" || command.type === "end_game") && this.adapter.gameCommands().includes(command.type)) {
       let result = await this.adapter.gameCommand(command.type);
       if (command.type === "start_game" && this.restartRunningMatch) {
-        this.restartRunningMatch = false;
-        if (result.noop) result = await this.adapter.restartGame();
+        // A no-op (game_state says it runs) or a refused StartGame (no
+        // game_state, or it failed) both mean the match may already run.
+        if (result.noop || !result.ok) result = await this.adapter.restartGame();
+        // Kept on failure, so a retry restarts the match again.
+        if (result.ok) this.restartRunningMatch = false;
       }
       // UEFN already had the match in the wanted state (it auto-starts one on
       // launch), so no lifecycle line may follow; emit the event so the

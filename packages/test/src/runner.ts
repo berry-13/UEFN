@@ -9,7 +9,7 @@ import { DEBUG_ABORT_MESSAGE, type DebugHooks } from "./debug.ts";
 import { filterTests, findTestFiles, loadTests } from "./discover.ts";
 import { AssertionError } from "./expect.ts";
 import { createFixtures } from "./fixtures.ts";
-import { generateScenario, scenarioLocations } from "./scenario.ts";
+import { ScenarioError, generateScenario, scenarioLocations } from "./scenario.ts";
 import { slugify } from "./names.ts";
 
 export type RunnerEvent =
@@ -107,6 +107,18 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       const other = seen.get(t.id);
       if (other) throw new StageError("VALIDATING", `duplicate test id '${t.id}' in ${relative(engine.root, other)} and ${relative(engine.root, t.file)}`);
       seen.set(t.id, t.file);
+    }
+    if (engine.config.scenario.enabled) {
+      // A test whose device cannot be generated would only time out later.
+      const invalid: string[] = [];
+      for (const t of selected) {
+        try {
+          expectedScenario(engine, t);
+        } catch (error) {
+          invalid.push(`${t.id}: ${(error as Error).message}`);
+        }
+      }
+      if (invalid.length > 0) throw new StageError("VALIDATING", `scenario cannot be generated for ${invalid.join("; ")}`);
     }
     if (selected.length === 0) {
       const criteria = [
@@ -213,7 +225,11 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
   return summary;
 }
 
-/** The scenario device a YAML test generates, so the placed one can be checked against it. */
+/**
+ * The scenario device a YAML test generates, so the placed one can be checked
+ * against it; undefined for a test with no player actions. Throws the
+ * generation error of a test whose device cannot be generated.
+ */
 function expectedScenario(engine: DevToolsEngine, def: TestDefinition): { id: string; plan: string } | undefined {
   if (!def.yaml) return undefined;
   try {
@@ -224,9 +240,9 @@ function expectedScenario(engine: DevToolsEngine, def: TestDefinition): { id: st
       startDelayMs: parseDuration(config.scenario.start_delay),
     });
     return { id: def.id, plan: generated.fingerprint };
-  } catch {
-    // Not a scenario test (no player actions, or one the device cannot run).
-    return undefined;
+  } catch (error) {
+    if (error instanceof ScenarioError && error.kind === "no-actions") return undefined;
+    throw error;
   }
 }
 

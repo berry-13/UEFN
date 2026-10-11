@@ -396,3 +396,59 @@ await server.connect(new StdioServerTransport());
     await adapter.disconnect();
   }
 });
+
+test("without game_state, a refused StartGame in a reused scenario session restarts the match", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-mcp-restart-nostate-"));
+  const calls = join(dir, "calls.txt");
+  const script = join(dir, "restart.mjs");
+  const mcp = import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js");
+  const stdio = import.meta.resolve("@modelcontextprotocol/sdk/server/stdio.js");
+  // A connected session whose match runs; StopGame ends it, StartGame starts one.
+  await writeFile(
+    script,
+    `import { McpServer } from ${JSON.stringify(mcp)};
+import { StdioServerTransport } from ${JSON.stringify(stdio)};
+import { appendFileSync } from "node:fs";
+const server = new McpServer({ name: "fake-uefn-restart-nostate", version: "0" });
+let state = "Running";
+const tools = {
+  GetSessionStatus: () => "Connected",
+  GetGameState: () => state,
+  StopGame: () => { state = "CanStart"; return null; },
+  StartGame: () => { const ok = state === "CanStart"; state = "Running"; return ok ? null : "refused"; },
+};
+for (const [name, fn] of Object.entries(tools)) {
+  server.registerTool(name, { description: name }, async () => {
+    appendFileSync(${JSON.stringify(calls)}, name + "\\n");
+    const value = fn();
+    return { content: [{ type: "text", text: JSON.stringify({ returnValue: value }) }], isError: value === "refused" };
+  });
+}
+await server.connect(new StdioServerTransport());
+`,
+  );
+  await writeFile(calls, "");
+  const log = join(dir, "UnrealEditorFortnite.log");
+  await writeFile(log, "[2026.10.09-10.00.01:000][  2]LogValkyrieBeacon: [3974] (ValkyrieBeaconClient_3) MinigameStateChanged: EFortMinigameState::InProgress\n");
+  const adapter = new McpUefnAdapter({
+    mcp: McpAdapterConfig.parse({
+      command: process.execPath,
+      args: [script],
+      tools: { start_session: "StartSession", session_state: "GetSessionStatus", start_game: "StartGame", end_game: "StopGame" },
+      timeout_ms: 20_000,
+    }),
+    logPath: log,
+    sessionPollMs: 10,
+    scenario: { stepTimeoutMs: 1000 },
+  });
+  try {
+    await adapter.connect();
+    assert.equal((await adapter.startSession()).reused, true);
+    // StartGame is refused (the match runs), so the match is stopped and started.
+    assert.deepEqual(await adapter.transport().command({ type: "start_game" }), { ok: true });
+    const sent = (await readFile(calls, "utf8")).trim().split("\n").filter((c) => c === "StopGame" || c === "StartGame");
+    assert.deepEqual(sent, ["StartGame", "StopGame", "StartGame"]);
+  } finally {
+    await adapter.disconnect();
+  }
+});

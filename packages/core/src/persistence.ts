@@ -225,13 +225,15 @@ export class DevToolsDatabase {
    * in which case a start-time suffix keeps sessions apart.
    */
   uniqueSessionId(id: string, startedAt: number): string {
-    // Check and reserve in one write transaction so two processes cannot claim the same id.
+    // Check and reserve in one write transaction so two processes cannot claim
+    // the same id. Every call reserves a new row: an existing row is never
+    // treated as this caller's, even with the same start time (two processes
+    // can start in the same millisecond).
     return this.transaction(() => {
-      const find = this.db.prepare("SELECT started_at FROM sessions WHERE id = ?");
+      const find = this.db.prepare("SELECT 1 FROM sessions WHERE id = ?");
       let candidate = id;
       for (let n = 0; ; n++) {
-        const row = find.get(candidate) as { started_at: number } | undefined;
-        if (row && row.started_at === startedAt) return candidate;
+        const row = find.get(candidate);
         if (!row) {
           // Placeholder row; upsertSession fills in the real fields.
           this.db

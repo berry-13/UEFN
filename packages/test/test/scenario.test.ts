@@ -201,3 +201,12 @@ test("moving a location changes the fingerprint", () => {
   const at = (a: [number, number, number]) => generateScenario(parse(doc), { id: "t", locations: { ...locations, A: a }, startDelayMs: 0 }).fingerprint;
   assert.notEqual(at([0, 0, 0]), at([100, 0, 0]));
 });
+
+test("a wait before start_game is not replayed by the device", () => {
+  const g = generateScenario(
+    parse({ name: "W", setup: [{ wait: "7s" }, "start_game"], steps: [{ wait: "2s" }, { teleport: { player: 1, location: "A" } }] }),
+    { id: "w", locations, startDelayMs: 0 },
+  );
+  assert.doesNotMatch(g.verse, /Sleep\(7\.0\)/);
+  assert.match(g.verse, /Sleep\(2\.0\)/);
+});

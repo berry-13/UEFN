@@ -239,7 +239,9 @@ test("uniqueSessionId reserves the id so a second claimant gets a suffix", () =>
   try {
     assert.equal(db.uniqueSessionId("sim", 1000), "sim");
     assert.equal(db.uniqueSessionId("sim", 2000), `sim-${(2000).toString(36)}`);
-    assert.equal(db.uniqueSessionId("sim", 1000), "sim");
+    // Two sessions in the same millisecond are still two sessions.
+    assert.equal(db.uniqueSessionId("sim", 1000), `sim-${(1000).toString(36)}`);
+    assert.equal(db.uniqueSessionId("sim", 1000), `sim-${(1000).toString(36)}-1`);
   } finally {
     db.close();
   }
