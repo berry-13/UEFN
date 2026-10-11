@@ -56,7 +56,7 @@ start; it is not a synchronisation point with the host.
 | `spawn_player: { id }` | binds the id to the next player in `GetPlayers()` order | `player.spawned` (with position), `scenario.step` |
 | `teleport` / `enter` | `TeleportTo` the named location; first a spawn step if the player has not spawned yet or was eliminated, as the host does | `player.moved` (actual position), `scenario.step` |
 | `leave` | `TeleportTo` `<area>.outside` if configured, else 2000 units along +X from the area's position (not checked to be outside the area) | `player.moved`, `scenario.step` |
-| `damage: { amount }` | `Damage(amount)` | `player.state_changed` (health, shield), `player.eliminated` when health reads 0, `scenario.step` |
+| `damage: { amount }` | `Damage(amount)`; the step fails if health and shield did not drop (an eliminated or invulnerable player) | `player.state_changed` (health, shield), `player.eliminated` when health reads 0, `scenario.step` |
 | `eliminate` | `Damage` large enough to eliminate; the step fails if health stays above 0 (an invulnerable or sky-spawning player) | `player.state_changed`, `player.eliminated`, `scenario.step` |
 | `wait` | `Sleep` (only waits after `start_game`; earlier ones happen on the host before the device exists) | none |
 | `start_game` / `end_game` | nothing (the host does it over MCP) | |

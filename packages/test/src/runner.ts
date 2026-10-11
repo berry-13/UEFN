@@ -82,7 +82,11 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     let missingIds: string[] = [];
     if (options.ids) {
       const wanted = new Set(options.ids);
-      selected = selected.filter((t) => wanted.has(t.id));
+      // Explicit ids name their tests exactly, so a `.only` elsewhere does not hide them.
+      selected = filterTests(
+        tests.map((t) => ({ ...t, only: false })),
+        options.filter,
+      ).filter((t) => wanted.has(t.id));
       const found = new Set(selected.map((t) => t.id));
       missingIds = [...wanted].filter((id) => !found.has(id));
     }

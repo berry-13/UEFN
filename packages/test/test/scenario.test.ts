@@ -105,7 +105,7 @@ test("each player is captured once and the character is read at every step", () 
   assert.equal(g.verse.match(/GetPlayers\(\)\[0\]/g)?.length, 1);
   assert.equal(g.verse.match(/GetPlayers\(\)\[1\]/g)?.length, 1);
   assert.equal(g.verse.match(/set Players \+= array\{Player\}/g)?.length, 2);
-  assert.match(g.verse, /if \(Player := Players\[1\], Character := Player\.GetFortCharacter\[\]\):\n\s+Character\.Damage/);
+  assert.match(g.verse, /if \(Player := Players\[1\], Character := Player\.GetFortCharacter\[\]\):\n\s+Before := [^\n]+\n\s+Character\.Damage/);
 });
 
 test("a respawn after an elimination acts on the player's current character", () => {
@@ -221,4 +221,18 @@ test("a whole match before the player actions is refused", () => {
       }),
     /a complete match \(start_game \.\.\. end_game\) before the player actions is not supported/,
   );
+});
+
+test("a damage step that changed nothing fails, and the generator version is part of the fingerprint", async () => {
+  const { createHash } = await import("node:crypto");
+  const g = generateScenario(parse({ name: "D", setup: ["start_game", { spawn_player: { id: 1 } }], steps: [{ damage: { player: 1, amount: 25 } }] }), {
+    id: "d",
+    locations,
+    startDelayMs: 0,
+  });
+  assert.match(g.verse, /Before := Character\.GetHealth\(\) \+ Character\.GetShield\(\)\n\s+Character\.Damage\(25\.0\)/);
+  assert.match(g.verse, /if \(Character\.GetHealth\(\) \+ Character\.GetShield\(\) >= Before\):\n\s+Fail\(1, "player 1 took no damage/);
+  // A plan identical to an older generator's still gets a new fingerprint.
+  const unversioned = [...g.plan.map((s) => [s.index, s.action, s.player, s.arg].join("\u0000")), "start_delay 0"].join("\n");
+  assert.notEqual(g.fingerprint, createHash("sha256").update(unversioned).digest("hex").slice(0, 12));
 });

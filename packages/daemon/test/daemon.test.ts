@@ -548,3 +548,21 @@ test("a shutdown whose client disconnects while a run finishes still stops the d
     await close();
   }
 });
+
+test("releasing never deletes a lock that replaced ours after the ownership check", async () => {
+  const { acquireDaemonLock } = await import("@uefn-devtools/daemon");
+  const { releaseLock } = await import("../src/info.ts");
+  const { rename } = await import("node:fs/promises");
+  const dir = await mkdtemp(join(tmpdir(), "uefn-devtools-lock-"));
+  await mkdir(join(dir, ".devtools"), { recursive: true });
+  const path = daemonLockPath(dir);
+  await acquireDaemonLock(dir);
+  const ours = JSON.parse(await readFile(path, "utf8")) as { nonce: string };
+  // A takeover writes its lock right after the release confirmed ownership.
+  const fresh = JSON.stringify({ pid: process.pid, nonce: "winner" }) + "\n";
+  await releaseLock(path, ours.nonce, async () => {
+    await writeFile(`${path}.tmp`, fresh);
+    await rename(`${path}.tmp`, path);
+  });
+  assert.equal(await readFile(path, "utf8"), fresh);
+});

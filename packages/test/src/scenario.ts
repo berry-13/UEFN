@@ -74,6 +74,12 @@ const LEAVE_OFFSET = 2000;
 const ELIMINATE_DAMAGE = 100000;
 /** The `arg` of a spawn step the device adds before a teleport / enter of a player that is down. */
 export const IMPLICIT_SPAWN = "implicit";
+/**
+ * Version of what the generator emits. Part of every fingerprint: bump it
+ * when generated devices behave differently, so older placed devices are
+ * reported as stale even for an unchanged test.
+ */
+const GENERATOR_VERSION = 2;
 /** Scenario events use their own sequence range (see `SeqStart` in devtools.verse). */
 const SEQ_START = 1_000_000;
 
@@ -83,7 +89,7 @@ const SEQ_START = 1_000_000;
  * positions, which change the device's behaviour without changing any step.
  */
 export function scenarioFingerprint(plan: readonly ScenarioPlanStep[], timing: readonly string[] = []): string {
-  const text = [...plan.map((s) => [s.index, s.action, s.player, s.arg].join("\u0000")), ...timing].join("\n");
+  const text = [`generator ${GENERATOR_VERSION}`, ...plan.map((s) => [s.index, s.action, s.player, s.arg].join("\u0000")), ...timing].join("\n");
   return createHash("sha256").update(text).digest("hex").slice(0, 12);
 }
 
@@ -216,6 +222,7 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
     body.push(`        # ${step}: ${description}`);
     body.push(
       ...withCharacter(player.index, step, [
+        `            Before := Character.GetHealth() + Character.GetShield()`,
         `            Character.Damage(${verseFloat(amount)})`,
         `            ReportHealth(${verseString(player.name)}, Character)`,
         // Only what the device observes: an elimination is reported when health
@@ -229,7 +236,12 @@ export function generateScenario(test: YamlTest, options: ScenarioOptions): Gene
               `                Fail(${step}, "player ${player.index + 1} survived the elimination (health above 0; invulnerable or still sky-spawning?)")`,
               `                return`,
             ]
-          : []),
+          : [
+              // Damage that changed nothing (already down, or invulnerable) did not happen.
+              `            if (Character.GetHealth() + Character.GetShield() >= Before):`,
+              `                Fail(${step}, "player ${player.index + 1} took no damage (already eliminated, invulnerable or still sky-spawning?)")`,
+              `                return`,
+            ]),
         ...confirm(action, player.name, arg, description, "            "),
       ]),
     );

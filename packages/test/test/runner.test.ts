@@ -403,3 +403,19 @@ test("with scenario devices, a match that cleanup cannot end stops the run", asy
     await engine.close();
   }
 });
+
+test("explicit ids find their tests even when another test is marked only", async () => {
+  const focused = `import { test } from "@uefn-devtools/test";\ntest.only("focused", async ({ expect }) => { expect(1).toBe(1); });\n`;
+  const dir = await project(CONFIG(), { "a.test.yaml": YAML_TEST, "focused.test.ts": focused });
+  await mkdir(join(dir, "node_modules", "@uefn-devtools"), { recursive: true });
+  const { symlink } = await import("node:fs/promises");
+  await symlink(new URL("..", import.meta.url).pathname, join(dir, "node_modules", "@uefn-devtools", "test"));
+  const engine = await DevToolsEngine.open({ cwd: dir });
+  try {
+    const summary = await runTests(engine, { ids: ["capture-a"], skipBuild: true });
+    assert.equal(summary.status, "passed", JSON.stringify(summary.error ?? summary.tests));
+    assert.deepEqual(summary.tests.map((t) => t.id), ["capture-a"]);
+  } finally {
+    await engine.close();
+  }
+});

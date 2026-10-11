@@ -198,9 +198,22 @@ async function lockIsStale(root: string, path: string, holder: LockContents | un
   return Date.now() - created > LOCK_GRACE_MS;
 }
 
-async function releaseLock(path: string, nonce: string): Promise<void> {
-  // Only our own lock: an unreadable file may be a replacement still being written.
-  const holder = await readLock(path);
-  if (holder?.nonce !== nonce) return;
-  await rm(path, { force: true });
+/** Exported for tests; `beforeRemove` runs between the ownership check and the removal. */
+export async function releaseLock(path: string, nonce: string, beforeRemove?: () => Promise<void>): Promise<void> {
+  // Only our own lock: the file is moved aside atomically first, so a takeover
+  // that replaces it between the check and the removal is never deleted.
+  const aside = `${path}.${randomBytes(6).toString("hex")}.release`;
+  try {
+    await rename(path, aside);
+  } catch {
+    return; // already gone
+  }
+  if ((await readLock(aside))?.nonce === nonce) {
+    await beforeRemove?.();
+    await rm(aside, { force: true });
+    return;
+  }
+  // Someone else's lock (or one still being written): put it back.
+  await link(aside, path).catch(() => {});
+  await rm(aside, { force: true });
 }
