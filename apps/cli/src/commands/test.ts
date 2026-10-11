@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { watch } from "node:fs";
 import { resolve } from "node:path";
-import { consoleReporter, runTests } from "@uefn-devtools/test";
-import { int, openEngine, str, type Command, type Values } from "../shared.ts";
+import { createReporters, runTests } from "@uefn-devtools/test";
+import { int, list, openEngine, str, type Command, type Values } from "../shared.ts";
 
 export const test: Command = {
   name: "test",
@@ -15,6 +15,8 @@ export const test: Command = {
     "no-compile": { type: "boolean" },
     watch: { type: "boolean" },
     verbose: { type: "boolean" },
+    reporter: { type: "string", multiple: true },
+    output: { type: "string" },
   },
   optionHelp: [
     "--repeat <n>           Run each test n times and report reliability",
@@ -23,6 +25,9 @@ export const test: Command = {
     "--no-compile           Skip the Verse build stage",
     "--watch                Re-run when Verse or test files change",
     "--verbose              Print every iteration with --repeat",
+    "--reporter <name>      console | json | junit | github (repeat or comma-separate;",
+    "                       github is added automatically when GITHUB_ACTIONS=true)",
+    "--output <file>        junit/json output file (default .devtools/results/junit.xml)",
   ],
   async run(values, positionals) {
     if (values.watch) return watchTests(values);
@@ -31,13 +36,24 @@ export const test: Command = {
       const repeat = int(str(values, "repeat"), "repeat");
       const seed = int(str(values, "seed"), "seed");
       const retries = int(str(values, "retries"), "retries");
+      const reporters = list(values, "reporter");
+      const output = str(values, "output");
       const summary = await runTests(engine, {
         ...(positionals[0] ? { filter: positionals[0] } : {}),
         ...(repeat !== undefined ? { repeat } : {}),
         ...(seed !== undefined ? { seed } : {}),
         ...(retries !== undefined ? { retries } : {}),
         skipBuild: values["no-compile"] === true,
-        ...(values.json ? {} : { onEvent: consoleReporter({ verbose: values.verbose === true }) }),
+        ...(values.json && !reporters?.length
+          ? {}
+          : {
+              onEvent: createReporters({
+                ...(reporters ? { reporters } : {}),
+                ...(output ? { output } : {}),
+                root: engine.root,
+                verbose: values.verbose === true,
+              }),
+            }),
       });
       if (values.json) process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
       return summary.status === "passed" ? 0 : summary.status === "failed" ? 1 : 2;

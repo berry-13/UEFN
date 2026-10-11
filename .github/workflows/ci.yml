@@ -18,4 +18,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - name: Example project (simulated adapter)
-        run: cd examples/capture-point && node ../../apps/cli/dist/main.js test
+        run: cd examples/capture-point && node ../../apps/cli/dist/main.js test --reporter github,junit
+      - name: Upload example results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-results
+          path: examples/capture-point/.devtools/results
+          if-no-files-found: ignore
