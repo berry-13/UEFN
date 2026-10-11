@@ -97,9 +97,11 @@ export function runCli(cli: CliCommand, args: string[], options: CliRunOptions):
     let stderr = "";
     let cancelled = false;
     let settled = false;
+    let forceTimer: NodeJS.Timeout | undefined;
     const finish = (result: Omit<CliRunResult, "stdout" | "stderr" | "cancelled">) => {
       if (settled) return;
       settled = true;
+      clearTimeout(forceTimer);
       options.signal?.removeEventListener("abort", onAbort);
       resolve({ ...result, stdout, stderr, cancelled });
     };
@@ -120,14 +122,23 @@ export function runCli(cli: CliCommand, args: string[], options: CliRunOptions):
       cancelled = true;
       const taskkill = killCommand(process.platform, child.pid);
       if (taskkill) {
-        // The child is a shell wrapper on Windows; kill the whole tree.
-        spawn(taskkill.command, taskkill.args, { windowsHide: true, stdio: "ignore" }).on("error", () => child.kill());
-        return;
+        // The child is a shell wrapper on Windows; kill the whole tree, and fall back to killing the child itself.
+        const killer = spawn(taskkill.command, taskkill.args, { windowsHide: true, stdio: "ignore" });
+        killer.on("error", () => child.kill());
+        killer.on("close", (code) => {
+          if (code !== 0) child.kill();
+        });
+      } else {
+        child.kill("SIGTERM");
       }
-      child.kill("SIGTERM");
-      setTimeout(() => {
+      // Whatever the platform, never leave the promise pending if the process ignores the first attempt.
+      forceTimer = setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-      }, 3000).unref();
+        // Orphaned grandchildren can hold the pipes open so 'close' never fires, even after the
+        // child itself exited; settle anyway.
+        setTimeout(() => finish({ code: child.exitCode }), 1000).unref();
+      }, 3000);
+      forceTimer.unref();
     };
     if (options.signal?.aborted) onAbort();
     else options.signal?.addEventListener("abort", onAbort, { once: true });

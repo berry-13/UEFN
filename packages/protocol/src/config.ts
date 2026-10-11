@@ -61,10 +61,33 @@ export const McpAdapterConfig = z.object({
       start_session: z.string().optional(),
       stop_session: z.string().optional(),
       session_state: z.string().optional(),
+      /** Start / stop the in-game match (UEFN 42.30 SessionToolset has both; unverified live). */
+      start_game: z.string().optional(),
+      end_game: z.string().optional(),
+      /** Match state (UEFN 42.30 `GetGameState`: Unconnected / CanStart / Running); makes start/end idempotent. */
+      game_state: z.string().optional(),
     })
     .default({}),
   timeout_ms: z.number().positive().default(120_000),
 });
+
+/**
+ * Generated scenario devices drive player actions inside a real UEFN match,
+ * where no external tool can (docs/scenarios.md).
+ */
+export const ScenarioConfig = z.object({
+  /** Route player actions (teleport, damage, ...) to the generated in-game device. */
+  enabled: z.boolean().default(false),
+  /** Named world positions for `teleport.location`, `enter.area` and `leave.area`. */
+  locations: z.record(z.string(), Vector3).default({}),
+  /** Delay after the match starts before the device runs its first step. */
+  start_delay: Duration.default("3s"),
+  /** How long the host waits for each step's confirmation from the device. */
+  step_timeout: Duration.default("60s"),
+  /** Where `uefn scenario` writes generated Verse, relative to the project root. */
+  output: z.string().default("./Content/DevTools/Generated"),
+});
+export type ScenarioConfig = z.infer<typeof ScenarioConfig>;
 
 export const DevToolsConfig = z.object({
   project: z.object({ name: z.string().optional() }).default({}),
@@ -93,6 +116,7 @@ export const DevToolsConfig = z.object({
     })
     .default({ enabled: true, path: "./.devtools/devtools.db" }),
   instrumentation: z.object({ enabled: z.boolean().default(true) }).default({ enabled: true }),
+  scenario: ScenarioConfig.default(ScenarioConfig.parse({})),
   tests: z
     .object({
       timeout: Duration.default("30s"),

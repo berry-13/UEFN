@@ -23,9 +23,19 @@ simulated:
       score: 50
 
 mcp:
-  # command: <launcher for the UEFN MCP server>
-  # url: http://127.0.0.1:<port>/mcp
-  tools: {}
+  # UEFN 42.30+: enable Project > Project Settings > Experimental >
+  # "UEFN MCP Toolsets" (docs/evidence/uefn-42.30-live.md).
+  # url: http://localhost:8000/mcp
+  timeout_ms: 120000
+  # Live 42.30 tool names, reached through call_tool (uncomment to map them):
+  # tools:
+  #   compile: ValkyrieToolset.VerseToolset/BuildAll
+  #   start_session: ValkyrieToolset.SessionToolset/StartSession
+  #   stop_session: ValkyrieToolset.SessionToolset/StopSession
+  #   session_state: ValkyrieToolset.SessionToolset/GetSessionStatus
+  #   start_game: ValkyrieToolset.SessionToolset/StartGame
+  #   end_game: ValkyrieToolset.SessionToolset/StopGame
+  #   game_state: ValkyrieToolset.SessionToolset/GetGameState
 
 runtime:
   # log_path: C:/Users/<you>/AppData/Local/UnrealEditorFortnite/Saved/Logs/UnrealEditorFortnite.log

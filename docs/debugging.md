@@ -29,11 +29,10 @@ capturing A awards 50 points
 ...
 ```
 
-**mcp adapter.** `--headed` is forwarded as `{ "headed": true }` in the
-arguments of the tool mapped to `mcp.tools.start_session`. Whether that tool
-accepts the argument, and what it does with it, is **unverified**
-(docs/capabilities.md). When the session is reused, no start call is made and
-the hint has no effect. The terminal view described above works with this
+**mcp adapter.** Every UEFN play session launches the Fortnite client (real
+editor logs show `Launching Client [0] using ...FortniteLauncher.exe`), so
+UEFN sessions are always headed and nothing extra is sent to
+`mcp.tools.start_session`. The terminal view described above works with this
 adapter too, from the events the log transport receives.
 
 The frame renderer is a pure function (`renderFrame`, `renderStateLine` in

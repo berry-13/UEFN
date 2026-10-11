@@ -294,7 +294,7 @@ export function formatProfile(profile: Profile): string {
     ));
   }
   if (profile.stages) {
-    const order = ["BUILDING", "STARTING_SESSION", "WAITING_FOR_RUNTIME", "INITIALIZING", "RUNNING", "ASSERTING", "COLLECTING", "CLEANUP"];
+    const order = ["DISCOVERING", "VALIDATING", "BUILDING", "STARTING_SESSION", "WAITING_FOR_RUNTIME", "INITIALIZING", "RUNNING", "ASSERTING", "COLLECTING", "CLEANUP"];
     out.push("", "Run stages (ms)");
     out.push(...table(
       ["stage", "total"],

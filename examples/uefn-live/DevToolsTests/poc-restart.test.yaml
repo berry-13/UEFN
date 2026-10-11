@@ -1,0 +1,23 @@
+name: POC-001 controlled action restarts the match
+id: poc-restart
+timeout: 180s
+setup:
+  - start_game
+steps:
+  - wait_for:
+      event: probe.updated
+      match: { probe: poc.counter, value: 3 }
+      timeout: 60s
+  - end_game
+  - start_game
+  - wait_for:
+      event: probe.updated
+      match: { probe: poc.counter, value: 2 }
+      timeout: 60s
+assert:
+  - event:
+      type: session.ready
+      times: 1
+  - event:
+      type: game.started
+      times: 1

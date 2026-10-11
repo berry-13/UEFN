@@ -146,3 +146,20 @@ test("mapDiagnostics resolves files, converts to 0-based positions and keeps fil
   assert.deepEqual(mapped.byFile.get("/abs/x.verse"), [{ line: 0, column: 0, severity: "warning", message: "Unused" }]);
   assert.deepEqual(mapped.general.map((d) => d.message), ["simulated compile"]);
 });
+
+test("mapDiagnostics keeps absolute paths and resolves an older CLI's relative paths against the root", () => {
+  const mapped = mapDiagnostics(
+    {
+      success: false,
+      durationMs: 1,
+      diagnostics: [
+        { severity: "error", message: "a", file: "Sub/game.verse", line: 2 },
+        { severity: "error", message: "b", file: "/abs/x.verse" },
+      ],
+    },
+    "/proj",
+  );
+  assert.ok(mapped.byFile.has("/proj/Sub/game.verse"));
+  assert.ok(mapped.byFile.has("/abs/x.verse"));
+});
+

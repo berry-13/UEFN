@@ -19,7 +19,7 @@ import {
   type TestsResponse,
   type TraceResponse,
 } from "./api.ts";
-import { readDaemonInfo, removeDaemonInfo, writeDaemonInfo } from "./info.ts";
+import { acquireDaemonLock, probeDaemon, readDaemonInfo, removeDaemonInfo, writeDaemonInfo, type DaemonLock } from "./info.ts";
 
 const TICKET_TTL_MS = 60_000;
 const TicketBody = z.object({ ticket: z.string().min(1).max(256) });
@@ -36,9 +36,12 @@ export interface DaemonOptions {
   onShutdown?: () => void;
   /** SSE heartbeat interval (default 15s). */
   heartbeatMs?: number;
+  /** Bytes a stream may have queued unsent before the daemon drops it as too slow (default 8 MiB). */
+  streamBufferLimit?: number;
 }
 
 const HEARTBEAT_MS = 15_000;
+const STREAM_BUFFER_LIMIT = 8 * 1024 * 1024;
 const MAX_BODY = 1024 * 1024;
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -97,16 +100,17 @@ const EventsQuery = z.object({
 
 const RunBody = z.object({
   filter: z.string().optional(),
+  ids: z.array(z.string().min(1).max(256)).min(1).max(1000).optional(),
   repeat: z.number().int().positive().max(1000).default(1),
   seed: z.number().int().optional(),
   compile: z.boolean().default(true),
 });
 
-type Handler = (req: IncomingMessage, url: URL, actor: string) => Promise<unknown>;
+type Handler = (req: IncomingMessage, url: URL, actor: string, res: ServerResponse) => Promise<unknown>;
 interface Route {
   method: "GET" | "POST";
   path: string | RegExp;
-  handler: (req: IncomingMessage, url: URL, actor: string, match: RegExpExecArray | null) => Promise<unknown>;
+  handler: (req: IncomingMessage, url: URL, actor: string, match: RegExpExecArray | null, res: ServerResponse) => Promise<unknown>;
 }
 
 /**
@@ -129,6 +133,9 @@ export class DevToolsDaemon {
   private unsubscribe?: () => void;
   private lastSnapshot = "";
   private info?: DaemonInfo;
+  private startLock?: DaemonLock;
+  /** Set by /api/shutdown: no new mutation may queue behind the shutdown. */
+  private closing = false;
 
   constructor(private readonly options: DaemonOptions) {
     this.engine = options.engine;
@@ -151,25 +158,33 @@ export class DevToolsDaemon {
   /** Listens, subscribes to the engine and writes `.devtools/daemon.json`. */
   async start(): Promise<DaemonInfo> {
     const root = this.engine.root;
-    const existing = await readDaemonInfo(root);
-    if (existing && !existing.stale) {
-      throw new Error(`a daemon is already running for ${root} (pid ${existing.pid}, port ${existing.port})`);
-    }
-    if (this.options.staticDir) this.staticRoot = await realpath(resolve(this.options.staticDir));
-    await new Promise<void>((resolvePromise, reject) => {
-      this.server.once("error", reject);
-      this.server.listen(this.options.port ?? 0, "127.0.0.1", () => {
-        this.server.off("error", reject);
-        resolvePromise();
+    // Exclusive for the daemon's lifetime, so two concurrent starts cannot both get past here.
+    this.startLock = await acquireDaemonLock(root);
+    try {
+      const existing = await readDaemonInfo(root);
+      if (existing && !existing.stale && (await probeDaemon(existing))) {
+        throw new Error(`a daemon is already running for ${root} (pid ${existing.pid}, port ${existing.port})`);
+      }
+      if (this.options.staticDir) this.staticRoot = await realpath(resolve(this.options.staticDir));
+      await new Promise<void>((resolvePromise, reject) => {
+        this.server.once("error", reject);
+        this.server.listen(this.options.port ?? 0, "127.0.0.1", () => {
+          this.server.off("error", reject);
+          resolvePromise();
+        });
       });
-    });
-    const port = (this.server.address() as AddressInfo).port;
-    this.unsubscribe = this.engine.events.subscribe((event, index) => this.onRuntimeEvent(event, index));
-    this.heartbeat = setInterval(() => this.broadcastRaw(": heartbeat\n\n"), this.options.heartbeatMs ?? HEARTBEAT_MS);
-    this.heartbeat.unref();
-    this.info = { pid: process.pid, port, token: this.token, root, startedAt: Date.now(), version: DAEMON_VERSION, ui: !!this.staticRoot };
-    await writeDaemonInfo(this.info);
-    return this.info;
+      const port = (this.server.address() as AddressInfo).port;
+      this.unsubscribe = this.engine.events.subscribe((event, index) => this.onRuntimeEvent(event, index));
+      this.heartbeat = setInterval(() => this.broadcastRaw(": heartbeat\n\n"), this.options.heartbeatMs ?? HEARTBEAT_MS);
+      this.heartbeat.unref();
+      this.info = { pid: process.pid, port, token: this.token, root, startedAt: Date.now(), version: DAEMON_VERSION, ui: !!this.staticRoot };
+      await writeDaemonInfo(this.info);
+      return this.info;
+    } catch (error) {
+      // Leave nothing behind: no listener, heartbeat, subscription, daemon.json or lock.
+      await this.stop().catch(() => {});
+      throw error;
+    }
   }
 
   /** Closes streams and the listener and removes daemon.json. Does not close the engine. */
@@ -184,8 +199,11 @@ export class DevToolsDaemon {
       this.server.closeAllConnections();
       await closed;
     }
-    if (this.info) await removeDaemonInfo(this.info.root, this.info.pid);
+    if (this.info) await removeDaemonInfo(this.info.root, this.info.pid).catch(() => {});
     this.info = undefined;
+    const lock = this.startLock;
+    this.startLock = undefined;
+    await lock?.release();
   }
 
   // ── request pipeline ─────────────────────────────────────────────────────
@@ -227,7 +245,7 @@ export class DevToolsDaemon {
           methodMismatch = true;
           continue;
         }
-        return sendJson(res, 200, await route.handler(req, url, actor, match));
+        return sendJson(res, 200, await route.handler(req, url, actor, match, res));
       }
       throw new HttpError(methodMismatch ? 405 : 404, methodMismatch ? "method not allowed" : `no route for ${url.pathname}`);
     }
@@ -242,11 +260,24 @@ export class DevToolsDaemon {
     return a.length === b.length && timingSafeEqual(a, b);
   }
 
+  private assertOpen(): void {
+    if (this.closing) throw new HttpError(503, "daemon is shutting down");
+  }
+
+  /**
+   * Runs `fn` under the session lock. Checked at enqueue time: whatever queued
+   * before /api/shutdown runs before its barrier, anything later is refused.
+   */
+  private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    this.assertOpen();
+    return this.lock.run(fn);
+  }
+
   private buildRoutes(): Route[] {
     const e = this.engine;
-    const mutating = (action: string, fn: Handler): Route["handler"] => async (req, url, actor) => {
+    const audited = (action: string, fn: Handler): Route["handler"] => async (req, url, actor, _match, res) => {
       try {
-        const result = await fn(req, url, actor);
+        const result = await fn(req, url, actor, res);
         await this.audit.record({ actor, action, outcome: "ok" }).catch(() => {});
         return result;
       } catch (error) {
@@ -254,6 +285,11 @@ export class DevToolsDaemon {
         throw error;
       }
     };
+    const mutating = (action: string, fn: Handler): Route["handler"] =>
+      audited(action, async (req, url, actor, res) => {
+        this.assertOpen();
+        return fn(req, url, actor, res);
+      });
     return [
       { method: "GET", path: "/api/status", handler: async () => this.status() },
       { method: "GET", path: "/api/state", handler: async () => e.state },
@@ -266,12 +302,12 @@ export class DevToolsDaemon {
       },
       { method: "GET", path: "/api/tests", handler: async () => this.listTests() },
       { method: "GET", path: "/api/capabilities", handler: async () => e.capabilities() },
-      { method: "POST", path: "/api/compile", handler: mutating("daemon.compile", () => this.lock.run(() => e.compile())) },
+      { method: "POST", path: "/api/compile", handler: mutating("daemon.compile", () => this.exclusive(() => e.compile())) },
       {
         method: "POST",
         path: "/api/session/start",
         handler: mutating("daemon.session.start", () =>
-          this.lock.run(async () => {
+          this.exclusive(async () => {
             const session = await e.startSession();
             this.emitSession();
             await e.waitForRuntime();
@@ -284,7 +320,7 @@ export class DevToolsDaemon {
         method: "POST",
         path: "/api/session/stop",
         handler: mutating("daemon.session.stop", () =>
-          this.lock.run(async () => {
+          this.exclusive(async () => {
             await e.stopSession();
             this.emitSession();
             return { stopped: true };
@@ -296,10 +332,11 @@ export class DevToolsDaemon {
         path: "/api/tests/run",
         handler: mutating("daemon.tests.run", async (req) => {
           const body = RunBody.parse(await readJson(req));
-          return this.lock.run(async () => {
+          return this.exclusive(async () => {
             try {
               return await runTests(e, {
                 ...(body.filter ? { filter: body.filter } : {}),
+                ...(body.ids ? { ids: body.ids } : {}),
                 repeat: body.repeat,
                 ...(body.seed !== undefined ? { seed: body.seed } : {}),
                 skipBuild: !body.compile,
@@ -330,7 +367,27 @@ export class DevToolsDaemon {
       {
         method: "POST",
         path: "/api/shutdown",
-        handler: mutating("daemon.shutdown", async () => {
+        handler: audited("daemon.shutdown", async (_req, _url, _actor, res) => {
+          if (this.closing) return { stopping: true };
+          // From here on mutations are refused, so nothing can queue behind the barrier below.
+          this.closing = true;
+          // Shut down only once the response has gone out: stop() closes every
+          // connection, which would otherwise cut this one off (seen on Windows).
+          // Registered before the wait below, so a client that disconnects
+          // while a run finishes still triggers the shutdown.
+          let ready = false;
+          let fired = false;
+          const shutdown = () => {
+            if (fired || !ready) return;
+            fired = true;
+            setImmediate(this.options.onShutdown ?? (() => void this.stop()));
+          };
+          let gone = false;
+          res.once("finish", shutdown);
+          res.once("close", () => {
+            gone = true;
+            shutdown();
+          });
           // Let an in-progress run or session change finish before the engine closes.
           await new Promise<void>((done) => {
             const timer = setTimeout(done, SHUTDOWN_WAIT_MS);
@@ -340,7 +397,9 @@ export class DevToolsDaemon {
               done();
             });
           });
-          setImmediate(this.options.onShutdown ?? (() => void this.stop()));
+          ready = true;
+          // The client left during the wait: no response will be written.
+          if (gone || res.destroyed) shutdown();
           return { stopping: true };
         }),
       },
@@ -426,7 +485,7 @@ export class DevToolsDaemon {
 
   // ── server-sent events ───────────────────────────────────────────────────
 
-  private openStream(req: IncomingMessage, res: ServerResponse, url: URL): void {
+  private async openStream(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache",
@@ -439,7 +498,16 @@ export class DevToolsDaemon {
     const fromParam = url.searchParams.get("fromIndex");
     const from = lastId !== undefined ? Number(lastId) + 1 : fromParam !== null ? Number(fromParam) : NaN;
     if (Number.isInteger(from) && from >= 0) {
-      this.engine.events.all(from).forEach((event, i) => res.write(runtimeFrame(event, from + i)));
+      // Replay honours backpressure (a long log must not be buffered whole for a slow
+      // client) and keeps going until it has caught up, so no live event is missed.
+      let next = from;
+      while (next < this.engine.events.size) {
+        for (const event of this.engine.events.all(next)) {
+          if (res.destroyed) return;
+          if (!res.write(runtimeFrame(event, next++))) await drained(res);
+        }
+      }
+      if (res.destroyed) return;
     }
     res.write(frame("session", this.snapshot()));
     this.streams.add(res);
@@ -467,7 +535,15 @@ export class DevToolsDaemon {
   }
 
   private broadcastRaw(chunk: string): void {
-    for (const res of this.streams) res.write(chunk);
+    const limit = this.options.streamBufferLimit ?? STREAM_BUFFER_LIMIT;
+    for (const res of this.streams) {
+      res.write(chunk);
+      // A client that stops reading would otherwise make the daemon buffer without bound.
+      if (res.writableLength > limit) {
+        this.streams.delete(res);
+        res.destroy();
+      }
+    }
   }
 
   // ── static files ─────────────────────────────────────────────────────────
@@ -536,6 +612,19 @@ function within(root: string, path: string): boolean {
 
 function headerString(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+/** Resolves once `res` can take more data, or once it is gone. */
+function drained(res: ServerResponse): Promise<void> {
+  return new Promise((done) => {
+    const finish = () => {
+      res.off("drain", finish);
+      res.off("close", finish);
+      done();
+    };
+    res.on("drain", finish);
+    res.on("close", finish);
+  });
 }
 
 function frame(name: string, data: unknown): string {

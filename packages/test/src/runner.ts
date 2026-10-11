@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import type { DevToolsEngine } from "@uefn-devtools/core";
+import { captureGitInfo, type DevToolsEngine } from "@uefn-devtools/core";
 import type { RunStage, RunSummary, TestAttempt, TestResult } from "@uefn-devtools/protocol";
 import { parseDuration } from "@uefn-devtools/protocol";
 import { TestAbortedError, TestContext, globalState, type TestDefinition } from "./context.ts";
@@ -9,6 +9,7 @@ import { DEBUG_ABORT_MESSAGE, type DebugHooks } from "./debug.ts";
 import { filterTests, findTestFiles, loadTests } from "./discover.ts";
 import { AssertionError } from "./expect.ts";
 import { createFixtures } from "./fixtures.ts";
+import { ScenarioError, generateScenario, scenarioLocations } from "./scenario.ts";
 import { slugify } from "./names.ts";
 
 export type RunnerEvent =
@@ -21,6 +22,8 @@ export type RunnerEvent =
 
 export interface RunOptions {
   filter?: string;
+  /** Run exactly these test ids (applied after `filter`); unlike `filter`, no substring matching. */
+  ids?: string[];
   /** Run each test N times (flaky detection, spec §25). */
   repeat?: number;
   retries?: number;
@@ -67,13 +70,26 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     emit({ kind: "stage", stage: s, at: Date.now(), ...(test ? { test } : {}), ...(iteration !== undefined ? { iteration } : {}) });
 
   const summary: RunSummary = { runId, status: "passed", startedAt: started, durationMs: 0, tests: [] };
+  // The run's own git snapshot: a reused session's is stale, and a session that failed to start has none.
+  const git = captureGitInfo(engine.root).catch(() => undefined);
   try {
     stage("DISCOVERING");
     const files = options.files
       ? options.files.map((f) => resolve(engine.root, f))
       : await findTestFiles(resolve(engine.root, engine.config.paths.tests));
     const { tests, errors } = await loadTests(files);
-    const selected = filterTests(tests, options.filter);
+    let selected = filterTests(tests, options.filter);
+    let missingIds: string[] = [];
+    if (options.ids) {
+      const wanted = new Set(options.ids);
+      // Explicit ids name their tests exactly, so a `.only` elsewhere does not hide them.
+      selected = filterTests(
+        tests.map((t) => ({ ...t, only: false })),
+        options.filter,
+      ).filter((t) => wanted.has(t.id));
+      const found = new Set(selected.map((t) => t.id));
+      missingIds = [...wanted].filter((id) => !found.has(id));
+    }
     emit({
       kind: "discovered",
       tests: selected.map((t) => ({ id: t.id, name: t.name, file: relative(engine.root, t.file) })),
@@ -81,8 +97,14 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     });
 
     stage("VALIDATING");
+    // Load errors first: a requested test in a file that failed to load is
+    // missing because of that error, which is the actionable message.
     if (errors.length > 0) {
       throw new StageError("VALIDATING", errors.map((e) => `${relative(engine.root, e.file)}: ${e.message}`).join("\n"));
+    }
+    if (missingIds.length > 0) {
+      // Every explicitly requested test must run; a typo must not pass silently.
+      throw new StageError("VALIDATING", `no test with id ${missingIds.map((id) => `'${id}'`).join(", ")}`);
     }
     const seen = new Map<string, string>();
     for (const t of tests) {
@@ -90,8 +112,24 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       if (other) throw new StageError("VALIDATING", `duplicate test id '${t.id}' in ${relative(engine.root, other)} and ${relative(engine.root, t.file)}`);
       seen.set(t.id, t.file);
     }
+    if (engine.usesScenarioDevices) {
+      // A test whose device cannot be generated would only time out later.
+      const invalid: string[] = [];
+      for (const t of selected.filter((t) => !t.skip)) {
+        try {
+          expectedScenario(engine, t);
+        } catch (error) {
+          invalid.push(`${t.id}: ${(error as Error).message}`);
+        }
+      }
+      if (invalid.length > 0) throw new StageError("VALIDATING", `scenario cannot be generated for ${invalid.join("; ")}`);
+    }
     if (selected.length === 0) {
-      throw new StageError("VALIDATING", options.filter ? `no tests match '${options.filter}'` : "no tests found");
+      const criteria = [
+        ...(options.filter ? [`'${options.filter}'`] : []),
+        ...(options.ids ? [`id ${options.ids.map((id) => `'${id}'`).join(", ")}`] : []),
+      ];
+      throw new StageError("VALIDATING", criteria.length ? `no tests match ${criteria.join(" and ")}` : "no tests found");
     }
 
     if (!options.skipBuild) {
@@ -124,7 +162,10 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
 
     const repeat = options.debug ? 1 : Math.max(1, options.repeat ?? 1);
     const retries = repeat > 1 || options.debug ? 0 : (options.retries ?? engine.config.tests.retries);
+    /** Set when a cleanup left a match running: nothing more can run cleanly. */
+    let halted: string | undefined;
     for (const def of selected) {
+      if (halted) break;
       if (def.skip) {
         const result: TestResult = {
           id: def.id, name: def.name, file: relative(engine.root, def.file), status: "skipped",
@@ -143,10 +184,12 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
           if (attempt.status !== "passed") {
             attempt.artifactDir = await writeFailureArtifacts(engine, artifactRoot, def, attempt, run.fromIndex, repeat > 1);
           }
-          if (attempt.status === "passed") break;
+          if (run.cleanupFailed) halted = `${def.id}: ${attempt.error ?? "cleanup failed"}`;
+          if (attempt.status === "passed" || halted) break;
         }
         attempts.push(attempt!);
         emit({ kind: "attempt", test: def, attempt: attempt!, repeat });
+        if (halted) break;
       }
       const passed = attempts.filter((a) => a.status === "passed").length;
       const result: TestResult = {
@@ -164,6 +207,10 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
       emit({ kind: "test", result });
     }
     summary.status = summary.tests.every((t) => t.status === "passed" || t.status === "skipped") ? "passed" : "failed";
+    if (halted) {
+      summary.status = "failed";
+      summary.error = `stopped after a cleanup left the match running (${halted}); remaining attempts and tests were not run`;
+    }
   } catch (error) {
     summary.status = "error";
     summary.error = (error as Error).message;
@@ -177,9 +224,10 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
     await writeArtifact(artifactRoot, "summary.json", summary).catch(() => {});
     // History must never fail a run.
     try {
+      const info = await git;
       engine.db?.recordRun(summary, {
-        ...(engine.session?.gitCommit ? { gitCommit: engine.session.gitCommit } : {}),
-        ...(engine.session?.git?.branch ? { gitBranch: engine.session.git.branch } : {}),
+        ...(info?.commit ? { gitCommit: info.commit } : {}),
+        ...(info?.branch ? { gitBranch: info.branch } : {}),
       });
     } catch {
       // ignored
@@ -190,6 +238,27 @@ export async function runTests(engine: DevToolsEngine, options: RunOptions = {})
   return summary;
 }
 
+/**
+ * The scenario device a YAML test generates, so the placed one can be checked
+ * against it; undefined for a test with no player actions. Throws the
+ * generation error of a test whose device cannot be generated.
+ */
+function expectedScenario(engine: DevToolsEngine, def: TestDefinition): { id: string; plan: string } | undefined {
+  if (!def.yaml) return undefined;
+  try {
+    const { config } = engine;
+    const generated = generateScenario(def.yaml, {
+      id: def.id,
+      locations: scenarioLocations(config),
+      startDelayMs: parseDuration(config.scenario.start_delay),
+    });
+    return { id: def.id, plan: generated.fingerprint };
+  } catch (error) {
+    if (error instanceof ScenarioError && error.kind === "no-actions") return undefined;
+    throw error;
+  }
+}
+
 async function runAttempt(
   engine: DevToolsEngine,
   def: TestDefinition,
@@ -198,7 +267,7 @@ async function runAttempt(
   stage: (s: RunStage, test?: string, iteration?: number) => void,
   updateSnapshots: boolean,
   debug?: DebugHooks,
-): Promise<{ attempt: TestAttempt; fromIndex: number }> {
+): Promise<{ attempt: TestAttempt; fromIndex: number; cleanupFailed: boolean }> {
   const startedAt = engine.now();
   const timeoutMs = parseDuration(def.options.timeout ?? engine.config.tests.timeout);
   let currentStage: RunStage = "INITIALIZING";
@@ -212,6 +281,7 @@ async function runAttempt(
   if (engine.supportsCommand("reset")) await engine.command({ type: "reset" });
   if (engine.supportsCommand("seed")) await engine.command({ type: "seed", seed });
   engine.resetObservedState();
+  if (engine.usesScenarioDevices) engine.expectScenario(expectedScenario(engine, def));
   const ctx = new TestContext(
     engine,
     engine.events.mark(),
@@ -288,8 +358,38 @@ async function runAttempt(
   const eventCounts = engine.events.countsByType(ctx.startIndex);
 
   enter("CLEANUP");
-  if (engine.state.phase === "playing" && engine.supportsCommand("end_game")) {
-    await engine.command({ type: "end_game" }).catch(() => {});
+  let cleanup: string | undefined;
+  // A start whose game.started never arrived (phase still idle) still left a
+  // match running; one that was seen to end needs nothing.
+  const matchLeft = engine.state.phase === "playing" || (ctx.gameStartSent && engine.state.phase === "idle");
+  if (matchLeft && !engine.supportsCommand("end_game") && engine.usesScenarioDevices) {
+    // The scenario device runs once per match: a match nobody can end leaves
+    // the next attempt without a device run.
+    cleanup = "end_game is not available (map mcp.tools.end_game), and scenario devices need a new match per attempt";
+  }
+  if (matchLeft && engine.supportsCommand("end_game")) {
+    // Wait for the match to end, as GameFixture.end() does, so a repeat or
+    // retry does not start while this match (and its scenario device) winds down.
+    const from = engine.events.mark();
+    cleanup = await engine
+      .command({ type: "end_game" })
+      .then(async (result) => {
+        if (engine.state.phase === "playing" || !result.noop) await engine.waitForEvent({ type: "game.ended" }, { timeoutMs: ctx.expectTimeout, fromIndex: from });
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => (e as Error).message,
+      );
+  }
+  // A match left running would leak into the next attempt or test: the
+  // attempt fails (whatever happened before) and the run stops after it.
+  if (cleanup !== undefined) {
+    const message = `cleanup could not end the match: ${cleanup}`;
+    if (status === "passed") {
+      status = "error";
+      failedStage = "CLEANUP";
+    }
+    error = error ? `${error}; ${message}` : message;
   }
 
   enter(status === "passed" ? "PASSED" : "FAILED");
@@ -304,7 +404,7 @@ async function runAttempt(
     ...(failedStage ? { failedStage } : {}),
     eventCounts,
   };
-  return { attempt, fromIndex: ctx.startIndex };
+  return { attempt, fromIndex: ctx.startIndex, cleanupFailed: cleanup !== undefined };
 }
 
 async function writeArtifact(dir: string, name: string, data: unknown): Promise<void> {

@@ -267,7 +267,7 @@ export function createDevToolsMcpServer(options: DevToolsMcpOptions): McpServer 
       inputSchema: { from_index: z.number().int().nonnegative().optional() },
     },
     guarded("uefn_profile", "read_project", async ({ from_index }: { from_index?: number }) =>
-      ok(buildProfile(engine.events.all(from_index ?? 0))),
+      ok(buildProfile(engine.events.all(from_index ?? engine.sessionEventIndex))),
     ),
   );
 

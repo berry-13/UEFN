@@ -25,4 +25,5 @@ jobs:
         with:
           name: example-results
           path: examples/capture-point/.devtools/results
+          include-hidden-files: true
           if-no-files-found: ignore

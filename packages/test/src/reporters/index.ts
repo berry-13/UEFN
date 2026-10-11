@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { consoleReporter } from "../reporter.ts";
 import type { RunnerEvent } from "../runner.ts";
 import { githubReporter } from "./github.ts";
@@ -41,6 +41,8 @@ export interface ReporterSetOptions {
   output?: string;
   /** Project root, for resolving relative output paths and annotation files. */
   root?: string;
+  /** The configured results directory; the default JUnit file goes there. */
+  resultsDir?: string;
   verbose?: boolean;
   env?: NodeJS.ProcessEnv;
   write?: (text: string) => void;
@@ -51,12 +53,18 @@ export interface ReporterSetOptions {
   stdoutJson?: boolean;
 }
 
+/** The combined `onEvent` handler, plus the reporter failures seen so far. */
+export type ReporterHandler = ((event: RunnerEvent) => void) & {
+  /** One message per reporter that threw (unwritable output file, step summary, ...). */
+  readonly failures: string[];
+};
+
 /**
  * Builds one `onEvent` from the selected reporters. Defaults to console, and adds
  * github when GITHUB_ACTIONS=true. `json` replaces console output with the summary
  * on stdout (or in `--output` when junit is not selected).
  */
-export function createReporters(options: ReporterSetOptions = {}): (event: RunnerEvent) => void {
+export function createReporters(options: ReporterSetOptions = {}): ReporterHandler {
   const env = options.env ?? process.env;
   const names = parseReporterNames(options.reporters ?? []);
   if (names.length === 0) names.push("console");
@@ -75,7 +83,7 @@ export function createReporters(options: ReporterSetOptions = {}): (event: Runne
       case "junit":
         handlers.push(
           junitReporter({
-            file: options.output ?? DEFAULT_JUNIT_PATH,
+            file: options.output ?? (options.resultsDir ? join(options.resultsDir, "junit.xml") : DEFAULT_JUNIT_PATH),
             cwd: root,
             onWrite: (file) => write(`JUnit: ${file}\n`),
           }),
@@ -97,13 +105,17 @@ export function createReporters(options: ReporterSetOptions = {}): (event: Runne
         break;
     }
   }
-  return (event) => {
+  const failures: string[] = [];
+  const handler = (event: RunnerEvent): void => {
     for (const h of handlers) {
       try {
         h(event);
       } catch (err) {
-        process.stderr.write(`warning: reporter failed: ${(err as Error).message}\n`);
+        const message = (err as Error).message;
+        failures.push(message);
+        process.stderr.write(`error: reporter failed: ${message}\n`);
       }
     }
   };
+  return Object.assign(handler, { failures });
 }

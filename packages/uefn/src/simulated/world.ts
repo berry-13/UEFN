@@ -259,7 +259,7 @@ export class SimulatedWorld {
       }
     }
     const profiling = this.config.profiling;
-    if (profiling.enabled && this.ticks % profiling.sample_every_ticks === 0) this.emitPerfSample();
+    if (this.playing && profiling.enabled && this.ticks % profiling.sample_every_ticks === 0) this.emitPerfSample();
   }
 
   /**

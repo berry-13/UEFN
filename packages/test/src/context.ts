@@ -3,6 +3,7 @@ import type { AssertionResult, StepResult } from "@uefn-devtools/protocol";
 import type { DevToolsEngine } from "@uefn-devtools/core";
 import type { SnapshotEnv } from "./snapshot.ts";
 import { DEBUG_ABORT_MESSAGE, type DebugHooks, type DebugTestInfo } from "./debug.ts";
+import type { YamlTest } from "./yaml.ts";
 
 export interface TestOptions {
   /** Session-clock timeout for the whole test (`30s`, `500ms` or milliseconds). */
@@ -22,6 +23,8 @@ export interface TestDefinition {
   name: string;
   file: string;
   format: "typescript" | "yaml";
+  /** The parsed document of a YAML test, from which its scenario device is generated. */
+  yaml?: YamlTest;
   body: TestBody;
   /** YAML tests evaluate their `assert:` block in the ASSERTING stage. */
   finalAssertions?: TestBody;
@@ -50,6 +53,8 @@ export class TestContext {
   debugTest?: DebugTestInfo;
   /** Session-clock time spent paused in the debugger; excluded from the test timeout. */
   pausedMs = 0;
+  /** A start_game was accepted and no end_game since: cleanup ends that match even if game.started never arrived. */
+  gameStartSent = false;
   /** The running phase's timeout, disarmed while paused. */
   deadline?: { suspend(): void; resume(): void };
   private stepIndex = 0;

@@ -20,6 +20,8 @@ export interface Recording {
   /** Session-clock milliseconds at the start and end of the recording. */
   startedAt: number;
   endedAt: number;
+  /** Enabled flag of each device the engine knew at the start mark; absent in older recordings. */
+  baseline?: { devices: Record<string, boolean> };
   events: RuntimeEvent[];
 }
 
@@ -36,6 +38,7 @@ export class Recorder {
   private startIndex?: number;
   private startedAt = 0;
   private recordedAt = "";
+  private baseline: Record<string, boolean> = {};
 
   constructor(
     private readonly engine: DevToolsEngine,
@@ -56,6 +59,7 @@ export class Recorder {
     this.startIndex = this.engine.events.mark();
     this.startedAt = this.engine.now();
     this.recordedAt = new Date().toISOString();
+    this.baseline = Object.fromEntries(Object.values(this.engine.state.devices).map((d) => [d.id, d.enabled]));
   }
 
   stop(): Recording {
@@ -70,6 +74,7 @@ export class Recorder {
       ...(session?.git ? { git: session.git } : {}),
       startedAt: this.startedAt,
       endedAt: this.engine.now(),
+      baseline: { devices: this.baseline },
       events: [...this.engine.events.all(this.startIndex)],
     };
     this.startIndex = undefined;

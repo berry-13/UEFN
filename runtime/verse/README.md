@@ -26,5 +26,11 @@ Rules:
 - Use the canonical event types (`docs/protocol.md`) where they apply. The
   state model and the built-in assertions understand those.
 
-**Status:** this file has not been compiled against UEFN yet. Compiling it is
-the first runtime step of POC-001 in [`docs/capabilities.md`](../../docs/capabilities.md).
+**Status:** compiles unchanged on UEFN 42.30
+([evidence](../../docs/evidence/uefn-42.30-live.md)). Its log lines have not
+been observed in a live play session yet (POC-001 in
+[`docs/capabilities.md`](../../docs/capabilities.md)).
+
+Avoid naming the emitter field `DevTools` if the file sits in a `DevTools`
+folder: UEFN turns folders into Verse modules, and the two names become
+ambiguous (error 3588).

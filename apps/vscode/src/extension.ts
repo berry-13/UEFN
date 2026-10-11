@@ -79,7 +79,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<UefnDe
       return;
     }
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "UEFN: Starting daemon" }, async () => {
-      const { cli, args, result } = await project.run(["daemon", "start", "--detach", "--ui"]);
+      let { cli, args, result } = await project.run(["daemon", "start", "--detach", "--ui"]);
+      if (result.code !== 0 && !result.cancelled) {
+        // The dashboard may not be built, or the CLI may predate --ui: the daemon alone is still useful.
+        project.output.appendLine("Starting with --ui failed; retrying without the dashboard.");
+        const retry = await project.run(["daemon", "start", "--detach"]);
+        if (retry.result.code === 0) {
+          void vscode.window.showWarningMessage("The UEFN DevTools daemon started without the dashboard (it is not built or this CLI does not support --ui).");
+        }
+        ({ cli, args, result } = retry);
+      }
       if (result.code !== 0) {
         void vscode.window.showErrorMessage(`Could not start the UEFN daemon: ${describeFailure(cli, args, result)}`);
         return;

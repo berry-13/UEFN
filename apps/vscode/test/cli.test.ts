@@ -85,6 +85,32 @@ test("runCli collects output and exit code; abort kills the process", async () =
   assert.notEqual(killed.code, 0);
 });
 
+test("cancelling settles even when a descendant keeps the pipes open after the child exits", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "uefn-vscode-orphan-"));
+  const script = join(dir, "orphan.js");
+  // The child spawns a detached grandchild that inherits stdout, then exits on SIGTERM.
+  await writeFile(
+    script,
+    `const { spawn } = require("node:child_process");
+const g = spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], { stdio: ["ignore", "inherit", "inherit"], detached: true });
+console.log("grandchild " + g.pid);
+g.unref();
+process.on("SIGTERM", () => process.exit(0));
+setInterval(() => {}, 1000);`,
+  );
+  await writeFile(join(dir, "package.json"), '{"type":"commonjs"}');
+  const cli = { command: process.execPath, args: [script], source: "setting" as const };
+  const abort = new AbortController();
+  const pending = runCli(cli, [], { cwd: dir, signal: abort.signal });
+  setTimeout(() => abort.abort(), 300);
+  const started = Date.now();
+  const result = await pending;
+  assert.equal(result.cancelled, true);
+  assert.ok(Date.now() - started < 10_000, "settled without waiting for the grandchild");
+  const pid = Number(/grandchild (\d+)/.exec(result.stdout)?.[1]);
+  if (pid) process.kill(pid);
+});
+
 test("a missing binary reports a readable error", async () => {
   const cli = { command: "uefn-definitely-missing-binary", args: [], source: "fallback" as const };
   const result = await runCli(cli, ["list"], { cwd: tmpdir() });

@@ -1,4 +1,4 @@
-import type { DeviceState, GameState, PlayerState, RuntimeCommand, RuntimeEvent, TeamState, Vector3 } from "@uefn-devtools/protocol";
+import type { CommandResult, DeviceState, GameState, PlayerState, RuntimeCommand, RuntimeEvent, TeamState, Vector3 } from "@uefn-devtools/protocol";
 import { CommandError, type DevToolsEngine, type EventQuery } from "@uefn-devtools/core";
 import { parseDuration } from "@uefn-devtools/protocol";
 import { currentContext, type TestContext } from "./context.ts";
@@ -9,9 +9,9 @@ export const HANDLE = Symbol.for("uefn-devtools.handle");
 
 export type Duration = number | string;
 
-async function send(ctx: TestContext, command: RuntimeCommand): Promise<void> {
+async function send(ctx: TestContext, command: RuntimeCommand): Promise<CommandResult> {
   try {
-    await ctx.engine.command(command);
+    return await ctx.engine.command(command);
   } catch (error) {
     if (error instanceof CommandError && error.unsupported) {
       throw new Error(
@@ -211,13 +211,23 @@ export class GameFixture {
   async start(): Promise<void> {
     await this.ctx.step("Game started", async () => {
       const from = this.ctx.engine.events.mark();
-      await send(this.ctx, { type: "start_game" });
+      const result = await send(this.ctx, { type: "start_game" });
+      this.ctx.gameStartSent = true;
+      // A match that was already running (UEFN starts one on launch) emits no
+      // log line; the transport reports it unless the state already shows it.
+      if (result.noop && this.ctx.engine.state.phase === "playing") return;
       await this.ctx.engine.waitForEvent({ type: "game.started" }, { timeoutMs: this.ctx.expectTimeout, fromIndex: from });
     });
   }
 
   async end(): Promise<void> {
-    await this.ctx.step("Game ended", () => send(this.ctx, { type: "end_game" }));
+    await this.ctx.step("Game ended", async () => {
+      const from = this.ctx.engine.events.mark();
+      const result = await send(this.ctx, { type: "end_game" });
+      this.ctx.gameStartSent = false;
+      if (result.noop && this.ctx.engine.state.phase !== "playing") return;
+      await this.ctx.engine.waitForEvent({ type: "game.ended" }, { timeoutMs: this.ctx.expectTimeout, fromIndex: from });
+    });
   }
 
   /** Returns a player handle; the player spawns on first action (or call `.spawn()`). */

@@ -6,9 +6,9 @@
 #
 #   [UEFN-DEVTOOLS]|1|<kind>|<seq>|<name>|key:t=value|...
 #
-# STATUS: UNVERIFIED. This file has not yet been compiled against UEFN.
-# Compiling it and confirming the lines reach the log file is step 2 of
-# POC-001 (docs/capabilities.md). Expect small syntax fixes.
+# STATUS: compiles unchanged on UEFN 42.30 (live, 2026-10-09). That its
+# lines reach the editor log during a play session is not verified yet
+# (POC-001 steps 4 to 8, docs/capabilities.md).
 #
 # Copy this file into your project's Verse folder (DevTools never edits your
 # gameplay files) and give one devtools_emitter instance to the devices that
@@ -16,6 +16,7 @@
 # therefore event ids and parent links, are unique.
 
 using { /UnrealEngine.com/Temporary/Diagnostics }
+using { /UnrealEngine.com/Temporary/SpatialMath }
 using { /Verse.org/Simulation }
 
 devtools_log<public> := class(log_channel){}
@@ -46,6 +47,10 @@ DevToolsInt<public>(Key:string, Value:int)<transacts>:string =
 DevToolsFloat<public>(Key:string, Value:float)<transacts>:string =
     DevToolsEscape(Key) + ":f={Value}"
 
+# A position or direction as x,y,z (Unreal units).
+DevToolsVector<public>(Key:string, Value:vector3)<transacts>:string =
+    DevToolsEscape(Key) + ":v={Value.X},{Value.Y},{Value.Z}"
+
 DevToolsBool<public>(Key:string, Value:logic)<transacts>:string =
     if (Value?) then DevToolsEscape(Key) + ":b=true" else DevToolsEscape(Key) + ":b=false"
 
@@ -65,34 +70,39 @@ DevToolsTrace<public>(TraceId:string)<transacts>:string =
 
 devtools_emitter<public> := class:
     Logger<private>:log = log{Channel := devtools_log}
+    # Offset for this emitter's sequence numbers. A second emitter in the same
+    # session (such as a generated scenario device) sets a distinct range so
+    # event ids stay unique, e.g. devtools_emitter{SeqStart := 1000000}.
+    SeqStart<public>:int = 0
     var NextSeq<private>:int = 0
 
     # Announces that the runtime is live. DevTools waits for this line in the
-    # WAITING_FOR_RUNTIME stage before running any test.
+    # WAITING_FOR_RUNTIME stage before running any test. It carries SeqStart,
+    # so each emitter's hello has its own event id.
     Hello<public>()<transacts>:void =
-        Logger.Print("[UEFN-DEVTOOLS]|1|H|0|0.1.0")
+        Logger.Print("[UEFN-DEVTOOLS]|1|H|{SeqStart}|0.1.0")
 
     # Emits an event and returns its sequence number for use as a parent.
     Emit<public>(EventType:string, Fields:[]string)<transacts>:int =
         set NextSeq += 1
-        var Line:string = "[UEFN-DEVTOOLS]|1|E|{NextSeq}|" + DevToolsEscape(EventType)
+        var Line:string = "[UEFN-DEVTOOLS]|1|E|{SeqStart + NextSeq}|" + DevToolsEscape(EventType)
         for (Field : Fields):
             set Line += "|" + Field
         Logger.Print(Line)
-        NextSeq
+        SeqStart + NextSeq
 
     # Reports the current value of a probe, e.g. ProbeInt("team.1.score", 50).
     ProbeInt<public>(ProbeId:string, Value:int)<transacts>:void =
         set NextSeq += 1
-        Logger.Print("[UEFN-DEVTOOLS]|1|P|{NextSeq}|" + DevToolsEscape(ProbeId) + "|v:i={Value}")
+        Logger.Print("[UEFN-DEVTOOLS]|1|P|{SeqStart + NextSeq}|" + DevToolsEscape(ProbeId) + "|v:i={Value}")
 
     ProbeFloat<public>(ProbeId:string, Value:float)<transacts>:void =
         set NextSeq += 1
-        Logger.Print("[UEFN-DEVTOOLS]|1|P|{NextSeq}|" + DevToolsEscape(ProbeId) + "|v:f={Value}")
+        Logger.Print("[UEFN-DEVTOOLS]|1|P|{SeqStart + NextSeq}|" + DevToolsEscape(ProbeId) + "|v:f={Value}")
 
     ProbeString<public>(ProbeId:string, Value:string)<transacts>:void =
         set NextSeq += 1
-        Logger.Print("[UEFN-DEVTOOLS]|1|P|{NextSeq}|" + DevToolsEscape(ProbeId) + "|v=" + DevToolsEscape(Value))
+        Logger.Print("[UEFN-DEVTOOLS]|1|P|{SeqStart + NextSeq}|" + DevToolsEscape(ProbeId) + "|v=" + DevToolsEscape(Value))
 
     # Profiling (docs/profiler.md). UNVERIFIED like the rest of this file.
     #

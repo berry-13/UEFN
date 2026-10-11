@@ -41,11 +41,20 @@ export interface GithubOptions {
   runUrl?: string;
 }
 
-/** Line of the `name:` key in a YAML test document, or undefined. */
-function yamlNameLine(absFile: string): number | undefined {
+function unquote(value: string): string {
+  return value.replace(/\s+#.*$/, "").trim().replace(/^(["'])(.*)\1$/, "$2");
+}
+
+/** Line of the `name:` key whose value is `name` in a YAML file (it may hold several documents), or undefined. */
+function yamlNameLine(absFile: string, name: string): number | undefined {
   if (!/\.ya?ml$/i.test(absFile)) return undefined;
   try {
-    const index = readFileSync(absFile, "utf8").split(/\r?\n/).findIndex((l) => /^name\s*:/.test(l));
+    const index = readFileSync(absFile, "utf8")
+      .split(/\r?\n/)
+      .findIndex((l) => {
+        const m = /^name\s*:\s*(.*)$/.exec(l);
+        return m !== null && unquote(m[1]!) === name;
+      });
     return index >= 0 ? index + 1 : undefined;
   } catch {
     return undefined;
@@ -56,7 +65,7 @@ function locate(test: TestResult, options: GithubOptions): AnnotationLocation {
   const root = options.root ?? process.cwd();
   const abs = resolve(root, test.file);
   const file = relative(options.workspace ?? root, abs).split(sep).join("/");
-  const line = yamlNameLine(abs);
+  const line = yamlNameLine(abs, test.name);
   return { file, ...(line ? { line } : {}) };
 }
 

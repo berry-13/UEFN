@@ -23,5 +23,7 @@ export interface CommandResult {
   error?: string;
   /** True when the transport cannot perform this command at all. */
   unsupported?: boolean;
+  /** True when the runtime was already in the requested state, so nothing happened (no event follows). */
+  noop?: boolean;
   data?: unknown;
 }

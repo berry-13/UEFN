@@ -84,3 +84,20 @@ test("permissions are enforced and invalid tests are rejected", async () => {
   await full.client.close();
   await full.engine.close();
 });
+
+test("the default profile covers the session the test tools started, not earlier ones", async () => {
+  const { engine, client, call } = await connect("full_access");
+  try {
+    await call("uefn_create_test", { file_name: "agent", yaml: TEST_YAML });
+    // A first session's events, then a second session started by a test tool.
+    assert.equal((await call("uefn_run_test", { filter: "agent" })).json.status, "passed");
+    await call("uefn_stop_session");
+    assert.equal((await call("uefn_run_test", { filter: "agent" })).json.status, "passed");
+    const profile = await call("uefn_profile");
+    assert.ok(engine.sessionEventIndex > 0);
+    assert.equal(profile.json.session.events, engine.events.size - engine.sessionEventIndex);
+  } finally {
+    await client.close();
+    await engine.close();
+  }
+});

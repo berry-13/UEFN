@@ -90,7 +90,7 @@ export class TestsView {
     );
   }
 
-  private async run(filter?: string): Promise<void> {
+  private async run(id?: string): Promise<void> {
     if (this.running) return;
     const repeat = Number(this.repeat.value || "1");
     if (!Number.isInteger(repeat) || repeat < 1 || repeat > 1000) {
@@ -118,8 +118,7 @@ export class TestsView {
         repeat,
         compile: this.compile.checked,
         ...(seed !== undefined ? { seed } : {}),
-        // Test ids are matched as substrings; an exact id narrows to that test in practice.
-        ...(filter ? { filter } : {}),
+        ...(id ? { ids: [id] } : {}),
       });
       this.finish(summary);
     } catch (error) {
@@ -179,6 +178,8 @@ export class TestsView {
       }
       case "done":
         this.finish(event.summary as RunSummary);
+        // A run rediscovers the test files; pick up tests added, renamed or removed since the last load.
+        void this.load();
         break;
     }
   }

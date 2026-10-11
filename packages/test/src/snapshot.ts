@@ -73,6 +73,8 @@ export function applyIgnore<T extends SnapshotValue>(snapshot: T, ignore: readon
  */
 export function snapshotState(state: GameState, options: SnapshotOptions = {}): Snapshot {
   const sections = new Set<SnapshotSection>(options.include ?? DEFAULT_SECTIONS);
+  // Positions live on player entries, so asking for them implies players.
+  if (sections.has("positions")) sections.add("players");
   const out: Record<string, unknown> = { phase: state.phase, round: state.round };
   if (state.winner !== undefined) out["winner"] = state.winner;
   if (sections.has("devices")) out["devices"] = state.devices;
@@ -231,7 +233,9 @@ export async function matchSnapshot(ctx: TestContext, name: string, options: Sna
   }
 
   const received = await settledSnapshot(ctx, options, timeout, settle);
+  ctx.ensureActive();
   if (stored !== undefined && deepEqual(stored, received)) return { pass: true, description: `snapshot '${name}' matches` };
+  ctx.ensureActive();
   file.snapshots[key] = received;
   await writeSnapshotFile(path, file);
   return { pass: true, description: `snapshot '${name}' ${stored === undefined ? "written" : "updated"}`, received };

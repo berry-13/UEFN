@@ -52,13 +52,13 @@ function actorOf(e: RuntimeEvent): string | undefined {
   return str(e.payload["player"]) ?? (e.source?.type === "player" ? e.source.id : undefined);
 }
 
-/** Whether a later event of the same action (teleport, elimination) already implies the exit `e` (exit on teleport/eliminate). */
+/** Whether a later event of the same action (an elimination, or an enter that teleports the player) already implies the exit `e`. */
 function impliedBy(events: readonly RuntimeEvent[], i: number, player: string): boolean {
   const e = events[i]!;
   for (let j = i + 1; j < events.length && events[j]!.timestamp - e.timestamp <= SAME_ACTION_MS; j++) {
     const n = events[j]!;
     if (actorOf(n) !== player && str(n.payload["player"]) !== player) continue;
-    if (n.type === EventTypes.PlayerMoved || n.type === EventTypes.PlayerEliminated) return true;
+    if (n.type === EventTypes.PlayerEliminated || n.type === EventTypes.PlayerEnteredArea) return true;
   }
   return false;
 }
@@ -71,12 +71,12 @@ interface Item {
 }
 
 /** Maps observed player actions to the YAML steps that reproduce them. */
-function toItems(events: readonly RuntimeEvent[], options: Required<GenerateOptions>, recordingStart: number): Item[] {
+function toItems(events: readonly RuntimeEvent[], options: Required<GenerateOptions>, recordingStart: number, baseline?: Record<string, boolean>): Item[] {
   const items: Item[] = [];
   // Device events at or before the game start (or the recording start when the
   // game was already running) report the initial state; later ones are actions.
   const baselineUntil = events.find((e) => e.type === EventTypes.GameStarted)?.timestamp ?? recordingStart;
-  const enabled = new Map<string, boolean>();
+  const enabled = new Map<string, boolean>(baseline ? Object.entries(baseline) : []);
   const waitFor = new Set(options.waitFor);
   for (let i = 0; i < events.length; i++) {
     const e = events[i]!;
@@ -125,6 +125,8 @@ function toItems(events: readonly RuntimeEvent[], options: Required<GenerateOpti
       case EventTypes.DeviceStateChanged: {
         const id = str(p["device"]) ?? e.source?.id;
         if (!id || typeof p["enabled"] !== "boolean") break;
+        // The baseline value when the device has one; otherwise a device first
+        // seen after the match started was enabled (the default) until now.
         const previous = enabled.get(id) ?? (e.timestamp > baselineUntil ? true : undefined);
         enabled.set(id, p["enabled"]);
         if (previous !== undefined && previous !== p["enabled"]) {
@@ -201,7 +203,7 @@ function isArrangement(s: Step): boolean {
  */
 export function generateYamlTest(recording: Recording, opts: GenerateOptions = {}): GeneratedTest {
   const options = { ...DEFAULTS, ...opts, name: opts.name ?? recording.name, id: opts.id ?? "" } as Required<GenerateOptions>;
-  const items = toItems(recording.events, options, recording.startedAt);
+  const items = toItems(recording.events, options, recording.startedAt, recording.baseline?.devices);
 
   const steps: Step[] = [];
   let previous: number | undefined;

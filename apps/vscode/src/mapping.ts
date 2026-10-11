@@ -168,7 +168,11 @@ export interface MappedDiagnostics {
   general: Diagnostic[];
 }
 
-/** Groups compile diagnostics by absolute file path; relative paths resolve against `root`. */
+/**
+ * Groups compile diagnostics by absolute file path. The CLI already returns
+ * absolute paths (the engine resolves adapter paths against paths.verse);
+ * a relative path from an older CLI resolves against `root`.
+ */
 export function mapDiagnostics(result: CompileResult, root: string): MappedDiagnostics {
   const byFile = new Map<string, MappedDiagnostic[]>();
   const general: Diagnostic[] = [];

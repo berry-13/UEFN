@@ -30,6 +30,9 @@
     "workspaceContains:**/uefn-devtools.config.yaml",
     "workspaceContains:**/*.uefnproject",
     "workspaceContains:**/*.test.yaml",
+    "workspaceContains:**/*.test.yml",
+    "workspaceContains:**/*.test.ts",
+    "workspaceContains:**/*.test.mts",
     "onLanguage:verse"
   ],
   "scripts": {

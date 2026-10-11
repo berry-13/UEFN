@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import type {
+  CommandResult,
   CompileResult,
   DevToolsConfig,
   GameState,
@@ -52,6 +53,7 @@ export function createAdapter(loaded: LoadedConfig, kind: DevToolsConfig["adapte
   return new McpUefnAdapter({
     mcp: config.mcp,
     ...(config.runtime.log_path ? { logPath: resolve(root, config.runtime.log_path) } : {}),
+    ...(config.scenario.enabled ? { scenario: { stepTimeoutMs: parseDuration(config.scenario.step_timeout) } } : {}),
   });
 }
 
@@ -67,6 +69,9 @@ export class DevToolsEngine {
   private pump?: Promise<void>;
   private ready = false;
   private connected = false;
+  private connecting?: Promise<void>;
+  /** Event log index where the current session's transport started; waitForRuntime looks from here. */
+  private sessionStartIndex = 0;
   private warnedPersistence = false;
   lastCompile?: CompileResult;
   /** SQLite sink and query layer; undefined when `persistence.enabled` is false. */
@@ -84,7 +89,14 @@ export class DevToolsEngine {
     });
     // persistence: begin
     if (loaded.config.persistence.enabled) {
-      this.db = new DevToolsDatabase(resolve(loaded.root, loaded.config.persistence.path));
+      try {
+        this.db = new DevToolsDatabase(resolve(loaded.root, loaded.config.persistence.path));
+      } catch (error) {
+        // A read-only project (or an unusable path) must not stop the engine; run without history.
+        this.persistenceError(error);
+      }
+    }
+    if (this.db) {
       this.events.subscribe((event) => {
         const session = this.currentSession;
         if (!session) return;
@@ -93,14 +105,18 @@ export class DevToolsEngine {
           if (event.type === EventTypes.GameStarted || event.type === EventTypes.GameEnded) this.db?.upsertSession(session);
         } catch (error) {
           // Persistence must never break event delivery to later subscribers.
-          if (!this.warnedPersistence) {
-            this.warnedPersistence = true;
-            process.stderr.write(`uefn-devtools: persistence error: ${error instanceof Error ? error.message : String(error)}\n`);
-          }
+          this.persistenceError(error);
         }
       });
     }
     // persistence: end
+  }
+
+  /** Reports the first persistence failure on stderr; later ones are dropped. */
+  private persistenceError(error: unknown): void {
+    if (this.warnedPersistence) return;
+    this.warnedPersistence = true;
+    process.stderr.write(`uefn-devtools: persistence error: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 
   static async open(options: EngineOptions = {}): Promise<DevToolsEngine> {
@@ -147,10 +163,18 @@ export class DevToolsEngine {
     return discoverProject(this.loaded);
   }
 
+  /** Connects the adapter once; concurrent callers share the same attempt. */
   async connect(): Promise<void> {
     if (this.connected) return;
-    await this.adapter.connect();
-    this.connected = true;
+    this.connecting ??= this.adapter
+      .connect()
+      .then(() => {
+        this.connected = true;
+      })
+      .finally(() => {
+        this.connecting = undefined;
+      });
+    return this.connecting;
   }
 
   async capabilities(): Promise<CapabilityReport> {
@@ -160,8 +184,30 @@ export class DevToolsEngine {
 
   async compile(): Promise<CompileResult> {
     await this.connect();
-    this.lastCompile = await this.adapter.compile();
+    const result = await this.adapter.compile();
+    // Adapters may report files relative to the Verse root (UEFN does); clients
+    // get absolute paths so they never have to read paths.verse themselves.
+    const verseDir = resolve(this.root, this.config.paths.verse);
+    this.lastCompile = {
+      ...result,
+      diagnostics: result.diagnostics.map((d) => (d.file && !isAbsolute(d.file) ? { ...d, file: resolve(verseDir, d.file) } : d)),
+    };
     return this.lastCompile;
+  }
+
+  /** True when player actions go to an in-game scenario device (scenario.enabled on a real UEFN adapter). */
+  get usesScenarioDevices(): boolean {
+    return this.config.scenario.enabled && this.adapter.name === "mcp";
+  }
+
+  /** Tells a scenario transport which device the running test expects (see ScenarioTransport). */
+  expectScenario(expected: { id: string; plan: string } | undefined): void {
+    if (this.currentSession) this.adapter.transport().expectScenario?.(expected);
+  }
+
+  /** Event log index where the current session started (0 before any session). */
+  get sessionEventIndex(): number {
+    return this.sessionStartIndex;
   }
 
   /** Launches a session, or reuses the one already running. */
@@ -188,19 +234,28 @@ export class DevToolsEngine {
       this.db.upsertSession(this.currentSession);
     }
     // persistence: end
+    // Only events from this session's transport count as its runtime announcing itself.
+    this.sessionStartIndex = this.events.mark();
     const transport = this.adapter.transport();
     await transport.start();
     this.pump = (async () => {
       for await (const event of transport.receive()) this.events.append(event);
     })();
     this.currentSession.status = "connected";
+    // persistence: begin
+    try {
+      this.db?.upsertSession(this.currentSession);
+    } catch (error) {
+      this.persistenceError(error);
+    }
+    // persistence: end
     return this.currentSession;
   }
 
   /** Blocks until the in-game runtime announces itself (`session.ready`). */
   async waitForRuntime(timeoutMs = parseDuration(this.config.runtime.ready_timeout)): Promise<void> {
     if (this.ready) return;
-    await this.waitForEvent({ type: EventTypes.SessionReady }, { timeoutMs, fromIndex: 0 });
+    await this.waitForEvent({ type: EventTypes.SessionReady }, { timeoutMs, fromIndex: this.sessionStartIndex });
   }
 
   async stopSession(): Promise<void> {
@@ -225,6 +280,7 @@ export class DevToolsEngine {
   }
 
   async close(): Promise<void> {
+    await this.connecting?.catch(() => {});
     try {
       await this.stopSession();
     } finally {
@@ -238,10 +294,11 @@ export class DevToolsEngine {
   }
 
   /** Sends a command to the runtime; throws {@link CommandError} on failure. */
-  async command(command: RuntimeCommand): Promise<void> {
+  async command(command: RuntimeCommand): Promise<CommandResult> {
     if (!this.currentSession) throw new CommandError("no active session", false);
     const result = await this.adapter.transport().command(command);
     if (!result.ok) throw new CommandError(result.error ?? `${command.type} failed`, result.unsupported === true);
+    return result;
   }
 
   supportsCommand(type: RuntimeCommand["type"]): boolean {
@@ -278,6 +335,7 @@ export class DevToolsEngine {
   /** Forgets derived state (not the event log) before a test starts. */
   resetObservedState(): void {
     this.liveState = emptyGameState();
+    if (this.currentSession) this.adapter.transport().resetObservedState?.();
   }
 
   /**

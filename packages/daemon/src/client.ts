@@ -110,12 +110,12 @@ export class DaemonClient {
     return this.request("POST", "/api/tests/run", body);
   }
 
-  /** Asks the daemon process to stop (it removes daemon.json on the way out). */
   /** Single-use, 60s ticket the dashboard trades for the token (`POST /api/ui/exchange`). */
   uiTicket(): Promise<{ ticket: string; expiresAt: number }> {
     return this.request("POST", "/api/ui/ticket");
   }
 
+  /** Asks the daemon process to stop (it removes daemon.json on the way out). */
   shutdown(): Promise<{ stopping: true }> {
     return this.request("POST", "/api/shutdown");
   }
@@ -136,10 +136,17 @@ export class DaemonClient {
     options: { signal?: AbortSignal; fromIndex?: number; onOpen?: () => void } = {},
   ): Promise<void> {
     const qs = options.fromIndex !== undefined ? `?fromIndex=${options.fromIndex}` : "";
-    const res = await fetch(`${this.options.url}/api/stream${qs}`, {
-      headers: this.headers(),
-      ...(options.signal ? { signal: options.signal } : {}),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.options.url}/api/stream${qs}`, {
+        headers: this.headers(),
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+    } catch (error) {
+      // Aborting before the headers arrive is a normal way to stop, as it is after.
+      if ((error as Error).name === "AbortError" || options.signal?.aborted) return;
+      throw error;
+    }
     if (!res.ok || !res.body) throw new DaemonClientError(await errorText(res), res.status);
     options.onOpen?.();
     const decoder = new TextDecoder();

@@ -150,8 +150,7 @@ const FLUSH_INTERVAL_MS = 100;
 /** SQLite sink and query layer for sessions, events and runs (docs/persistence.md). */
 export class DevToolsDatabase {
   private readonly db: DatabaseSync;
-  private buffer: { sessionId: string; idx: number; event: RuntimeEvent }[] = [];
-  private readonly nextIdx = new Map<string, number>();
+  private buffer: { sessionId: string; event: RuntimeEvent }[] = [];
   private timer?: NodeJS.Timeout;
   private closed = false;
   private warnedFlush = false;
@@ -226,8 +225,25 @@ export class DevToolsDatabase {
    * in which case a start-time suffix keeps sessions apart.
    */
   uniqueSessionId(id: string, startedAt: number): string {
-    const row = this.db.prepare("SELECT started_at FROM sessions WHERE id = ?").get(id) as { started_at: number } | undefined;
-    return !row || row.started_at === startedAt ? id : `${id}-${startedAt.toString(36)}`;
+    // Check and reserve in one write transaction so two processes cannot claim
+    // the same id. Every call reserves a new row: an existing row is never
+    // treated as this caller's, even with the same start time (two processes
+    // can start in the same millisecond).
+    return this.transaction(() => {
+      const find = this.db.prepare("SELECT 1 FROM sessions WHERE id = ?");
+      let candidate = id;
+      for (let n = 0; ; n++) {
+        const row = find.get(candidate);
+        if (!row) {
+          // Placeholder row; upsertSession fills in the real fields.
+          this.db
+            .prepare("INSERT INTO sessions (id, project_id, status, started_at, adapter) VALUES (?, '', 'connected', ?, '')")
+            .run(candidate, startedAt);
+          return candidate;
+        }
+        candidate = `${id}-${startedAt.toString(36)}${n === 0 ? "" : `-${n}`}`;
+      }
+    });
   }
 
   /** Inserts or updates the session row (status, endedAt). */
@@ -236,7 +252,7 @@ export class DevToolsDatabase {
       .prepare(
         `INSERT INTO sessions (id, project_id, status, started_at, ended_at, build_revision, git_commit, git_json, adapter)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET status = excluded.status, ended_at = excluded.ended_at,
+         ON CONFLICT (id) DO UPDATE SET project_id = excluded.project_id, adapter = excluded.adapter, status = excluded.status, ended_at = excluded.ended_at,
            build_revision = excluded.build_revision, git_commit = excluded.git_commit, git_json = excluded.git_json`,
       )
       .run(
@@ -250,18 +266,12 @@ export class DevToolsDatabase {
         s.git ? JSON.stringify(s.git) : null,
         s.adapter,
       );
-    if (!this.nextIdx.has(s.id)) {
-      const row = this.db.prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = ?").get(s.id) as { n: number };
-      this.nextIdx.set(s.id, row.n);
-    }
   }
 
   /** Buffers an event; written in one transaction on the next flush. */
   queueEvent(sessionId: string, event: RuntimeEvent): void {
     if (this.closed) return;
-    const idx = this.nextIdx.get(sessionId) ?? 0;
-    this.nextIdx.set(sessionId, idx + 1);
-    this.buffer.push({ sessionId, idx, event });
+    this.buffer.push({ sessionId, event });
     this.scheduleFlush();
   }
 
@@ -294,12 +304,18 @@ export class DevToolsDatabase {
     const batch = this.buffer;
     this.buffer = [];
     const insert = this.db.prepare(
-      `INSERT OR REPLACE INTO events (session_id, idx, id, timestamp, type, source_type, source_id, target_type, target_id, trace_id, parent_event_id, payload)
+      `INSERT INTO events (session_id, idx, id, timestamp, type, source_type, source_id, target_type, target_id, trace_id, parent_event_id, payload)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     try {
       this.transaction(() => {
-      for (const { sessionId, idx, event: e } of batch) {
+      // Indexes are assigned under the write lock so concurrent writers never overwrite each other.
+      const next = new Map<string, number>();
+      const maxIdx = this.db.prepare("SELECT COALESCE(MAX(idx), -1) AS m FROM events WHERE session_id = ?");
+      for (const { sessionId, event: e } of batch) {
+        let idx = next.get(sessionId);
+        if (idx === undefined) idx = (maxIdx.get(sessionId) as { m: number }).m + 1;
+        next.set(sessionId, idx + 1);
         insert.run(
           sessionId,
           idx,
@@ -433,8 +449,9 @@ export class DevToolsDatabase {
       ...(r["git_commit"] != null ? { gitCommit: String(r["git_commit"]) } : {}),
     }));
     let flips = 0;
-    for (let i = 1; i < entries.length; i++) {
-      if ((entries[i]!.status === "passed") !== (entries[i - 1]!.status === "passed")) flips++;
+    const decided = entries.filter((e) => e.status !== "skipped");
+    for (let i = 1; i < decided.length; i++) {
+      if ((decided[i]!.status === "passed") !== (decided[i - 1]!.status === "passed")) flips++;
     }
     const n = entries.length;
     return {
@@ -456,8 +473,20 @@ export class DevToolsDatabase {
 
   close(): void {
     if (this.closed) return;
+    // A busy database may clear within a few attempts; only then give up and say what was lost.
+    for (let attempt = 0; attempt < 3 && this.buffer.length > 0; attempt++) {
+      try {
+        this.flush();
+      } catch (error) {
+        if (attempt === 2) {
+          process.stderr.write(
+            `uefn-devtools: persistence close lost ${this.buffer.length} buffered event(s): ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      }
+    }
     try {
-      this.flush();
+      this.buffer = [];
     } finally {
       this.closed = true;
       clearTimeout(this.timer);

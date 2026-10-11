@@ -33,6 +33,7 @@ export const profile: Command = {
         const summary = await runTests(engine, {
           ...(positionals[0] ? { filter: positionals[0] } : {}),
           repeat: 1,
+          retries: 0,
           onEvent: (event) => {
             // Stage marks on the session clock, so they line up with event timestamps.
             if (event.kind === "stage") {

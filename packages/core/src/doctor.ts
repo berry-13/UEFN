@@ -92,7 +92,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 }
 
 const REQUIRED_TOOLS = ["compile", "start_session"] as const;
-const OPTIONAL_TOOLS = ["project_info", "stop_session", "session_state"] as const;
+const OPTIONAL_TOOLS = ["project_info", "stop_session", "session_state", "start_game", "end_game", "game_state"] as const;
 
 /**
  * Environment and project health checks. Pass an engine or loaded config,
@@ -146,7 +146,8 @@ export async function runDoctor(source?: DevToolsEngine | LoadedConfig, options:
   }
 
   const { config, root } = loaded;
-  const adapter = options.adapter ?? config.adapter;
+  const engineAdapter = source && "loaded" in source ? source.adapter.name : undefined;
+  const adapter = options.adapter ?? (engineAdapter === "simulated" || engineAdapter === "mcp" ? engineAdapter : config.adapter);
   add(
     loaded.file
       ? { id: "config.found", title: "Configuration file", status: "pass", detail: relative(root, loaded.file) || loaded.file }
@@ -269,11 +270,21 @@ export async function runDoctor(source?: DevToolsEngine | LoadedConfig, options:
   );
 
   const resultsDir = resolve(root, config.paths.results);
+  // The nearest existing ancestor is where mkdir starts; it must be a directory.
   let probe = resultsDir;
-  while (!(await isDir(probe)) && dirname(probe) !== probe) probe = dirname(probe);
+  while (!(await stat(probe).then(() => true, () => false)) && dirname(probe) !== probe) probe = dirname(probe);
   const writable = await access(probe, constants.W_OK).then(() => true, () => false);
+  const blockedByFile = !(await isDir(probe));
   add(
-    writable
+    blockedByFile
+      ? {
+          id: "results.writable",
+          title: "Results directory writable",
+          status: "fail",
+          detail: `${probe} exists but is not a directory, so ${relative(root, resultsDir)} cannot be created`,
+          fix: "remove the file or change paths.results in the config",
+        }
+      : writable
       ? { id: "results.writable", title: "Results directory writable", status: "pass", detail: relative(root, resultsDir) || "." }
       : {
           id: "results.writable",
@@ -396,9 +407,13 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
     const adapter = new McpUefnAdapter({ mcp });
     const timeoutMs = options.connectTimeoutMs ?? 10_000;
     let tools: string[] | undefined;
+    let exposed = new Set<string>();
+    let unverified = new Set<string>();
     try {
       await withTimeout(adapter.connect(), timeoutMs, "connecting to the MCP server");
       tools = ((await adapter.describeCapabilities()).tools ?? []).map((t) => t.name);
+      exposed = adapterExposedTools(adapter, Object.values(mcp.tools));
+      unverified = new Set([...exposed].filter((name) => !adapter.toolVerified(name)));
       add({ id: "mcp.connect", title: "MCP server reachable", status: "pass", detail: `${tools.length} tool(s) exposed` });
     } catch (error) {
       add({
@@ -417,9 +432,18 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
       add({ id: "mcp.tool_names", title: "Mapped tools exist on server", status: "skip", detail: "could not connect" });
     } else {
       const mapped = Object.entries(mcp.tools).filter((e): e is [string, string] => typeof e[1] === "string");
-      const absent = mapped.filter(([, name]) => !tools.includes(name));
+      const absent = mapped.filter(([, name]) => !exposed.has(name));
+      const unchecked = mapped.filter(([, name]) => unverified.has(name));
       add(
-        absent.length === 0
+        absent.length === 0 && unchecked.length > 0
+          ? {
+              id: "mcp.tool_names",
+              title: "Mapped tools exist on server",
+              status: "warn",
+              detail: `${unchecked.map(([k, n]) => `mcp.tools.${k}='${n}'`).join(", ")} could not be checked: the server did not describe the toolset`,
+              fix: "check the names against the server's describe_toolset output",
+            }
+          : absent.length === 0
           ? { id: "mcp.tool_names", title: "Mapped tools exist on server", status: "pass", detail: mapped.length ? mapped.map(([, n]) => n).join(", ") : "nothing mapped" }
           : {
               id: "mcp.tool_names",
@@ -444,6 +468,15 @@ async function checkMcp(add: Add, loaded: LoadedConfig, verseFiles: string[], op
   } else {
     const abs = resolve(root, logPath);
     if (await isFile(abs)) add({ id: "runtime.log", title: "Runtime log path", status: "pass", detail: abs });
+    else if (await isDir(abs)) {
+      add({
+        id: "runtime.log",
+        title: "Runtime log path",
+        status: "fail",
+        detail: `${abs} is a directory; runtime.log_path must be a file`,
+        fix: "point runtime.log_path at the UEFN output log file, not its directory",
+      });
+    }
     else if (await isDir(dirname(abs))) {
       add({
         id: "runtime.log",
@@ -530,4 +563,12 @@ async function checkDaemon(add: Add, root: string): Promise<void> {
       fix: "delete .devtools/daemon.json (the next daemon start recreates it)",
     });
   }
+}
+
+/**
+ * The mappings the connected adapter can call, read before it disconnects:
+ * McpUefnAdapter.hasTool checks `<toolset>/<tool>` against `describe_toolset`.
+ */
+function adapterExposedTools(adapter: McpUefnAdapter, mappings: (string | undefined)[]): Set<string> {
+  return new Set(mappings.filter((m): m is string => typeof m === "string" && adapter.hasTool(m)));
 }

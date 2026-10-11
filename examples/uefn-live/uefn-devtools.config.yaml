@@ -1,0 +1,37 @@
+# UEFN DevTools: live POC-001 against the UEFN 42.30 MCP server.
+project:
+  name: TestMCPClaude
+
+paths:
+  verse: ./Content
+  tests: ./DevToolsTests
+  results: ./.devtools/results
+
+adapter: mcp
+
+mcp:
+  url: http://localhost:8000/mcp
+  # Live UEFN 42.30 names (meta-tool mode, reached through call_tool).
+  tools:
+    compile: ValkyrieToolset.VerseToolset/BuildAll
+    start_session: ValkyrieToolset.SessionToolset/StartSession
+    stop_session: ValkyrieToolset.SessionToolset/StopSession
+    session_state: ValkyrieToolset.SessionToolset/GetSessionStatus
+    start_game: ValkyrieToolset.SessionToolset/StartGame
+    end_game: ValkyrieToolset.SessionToolset/StopGame
+    game_state: ValkyrieToolset.SessionToolset/GetGameState
+  timeout_ms: 300000
+
+runtime:
+  log_path: C:/Users/<you>/AppData/Local/UnrealEditorFortnite/Saved/Logs/UnrealEditorFortnite.log
+  ready_timeout: 300s
+
+persistence:
+  enabled: false
+
+scenario:
+  enabled: true
+  locations:
+    # Pick solid ground in your map (EditorAppToolset/ScreenCoordsToWorld helps).
+    Ground: [757, 351, 484]
+    Sky: [0, 0, 3000]

@@ -151,6 +151,7 @@ export function yamlToDefinition(doc: YamlTest, file: string): TestDefinition {
     name: doc.name,
     file,
     format: "yaml",
+    yaml: doc,
     body,
     finalAssertions,
     options: {

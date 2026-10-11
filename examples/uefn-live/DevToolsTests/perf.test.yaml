@@ -1,0 +1,19 @@
+name: Verse profiling helpers report spans and samples
+id: perf-live
+timeout: 120s
+setup:
+  - start_game
+steps:
+  - wait_for:
+      event: probe.updated
+      match:
+        probe: poc.counter
+        value: 6
+      timeout: 60s
+assert:
+  - event:
+      type: perf.span
+      match: { name: poc.tick }
+  - event:
+      type: perf.sample
+      match: { scope: poc }

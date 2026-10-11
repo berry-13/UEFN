@@ -10,6 +10,12 @@ function settings(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration("uefnDevtools");
 }
 
+/** Number of path segments between `base` and `dir` (0 for `base` itself). */
+function depthFrom(base: string, dir: string): number {
+  const relative = path.relative(base, dir);
+  return relative === "" ? 0 : relative.split(/[\\/]/).length;
+}
+
 /**
  * The UEFN project the extension serves: the directory holding
  * `uefn-devtools.config.yaml` (or `uefnDevtools.projectRoot`, or the first
@@ -43,7 +49,7 @@ export class Project implements vscode.Disposable {
     const configured = settings().get<string>("projectRoot", "").trim();
     if (configured) return new Project(path.resolve(base, configured), output);
     const found = await vscode.workspace.findFiles(`**/${CONFIG_FILE}`, "**/node_modules/**", 20);
-    const dirs = found.map((u) => path.dirname(u.fsPath)).sort((a, b) => a.length - b.length || a.localeCompare(b));
+    const dirs = found.map((u) => path.dirname(u.fsPath)).sort((a, b) => depthFrom(base, a) - depthFrom(base, b) || a.localeCompare(b));
     return new Project(dirs[0] ?? base, output);
   }
 
