@@ -15,5 +15,5 @@
     }
   },
   "files": ["dist"],
-  "dependencies": {"@uefn-devtools/protocol": "workspace:*", "@uefn-devtools/core": "workspace:*", "@uefn-devtools/test": "workspace:*", "zod": "^4.3.6"}
+  "dependencies": {"@uefn-devtools/protocol": "workspace:*", "@uefn-devtools/core": "workspace:*", "@uefn-devtools/test": "workspace:*", "zod": "^4.6.6"}
 }

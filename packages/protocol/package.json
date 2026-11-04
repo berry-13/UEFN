@@ -11,5 +11,5 @@
     }
   },
   "files": ["dist"],
-  "dependencies": {"zod": "^4.3.6", "yaml": "^2.8.1"}
+  "dependencies": {"zod": "^4.6.6", "yaml": "^2.8.1"}
 }

@@ -194,6 +194,6 @@
   "devDependencies": {
     "@types/vscode": "1.100.0",
     "@uefn-devtools/test": "workspace:*",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   }
 }
